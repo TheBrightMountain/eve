@@ -87,3 +87,40 @@ def test_removing_the_last_dpi_entry_turns_the_service_off():
     book = _book(("x.com", {"method": "dpi", "strategy": "fake", "verdict": "sni-blocked"}))
     ledger.remove_entry(book, "x.com")
     assert reconcile.desired(book)["dpi_active"] is False
+
+
+# --- who is holding a host open ---------------------------------------------
+#
+# `check` reports `open` whether a host is genuinely fine or only fine because
+# eve is propping it up. Those are very different situations and it needs to
+# tell them apart.
+
+
+def test_a_host_eve_pinned_is_reported_as_held():
+    book = _book(("a.com", {"method": "pin", "address": "1.1.1.1", "verdict": "dns-poisoned"}))
+    held = ledger.holding(book, "a.com")
+    assert held["name"] == "a.com"
+    assert held["method"] == "pin"
+
+
+def test_a_host_eve_knows_nothing_about_is_not_held():
+    assert ledger.holding(ledger.blank(), "stranger.com") is None
+
+
+def test_a_subdomain_of_a_dpi_host_is_held_too():
+    """zapret applies a hostlist to subdomains automatically, so the bypass covers them."""
+    book = _book(("steampowered.com", {"method": "dpi", "strategy": "fake", "verdict": "sni-blocked"}))
+    held = ledger.holding(book, "store.steampowered.com")
+    assert held is not None
+    assert held["name"] == "steampowered.com"
+
+
+def test_a_subdomain_of_a_pinned_host_is_not_held():
+    """A hosts-file entry is one exact name; it has no notion of subdomains."""
+    book = _book(("steampowered.com", {"method": "pin", "address": "1.1.1.1", "verdict": "dns-poisoned"}))
+    assert ledger.holding(book, "store.steampowered.com") is None
+
+
+def test_a_lookalike_domain_is_not_mistaken_for_a_subdomain():
+    book = _book(("steampowered.com", {"method": "dpi", "strategy": "fake", "verdict": "sni-blocked"}))
+    assert ledger.holding(book, "notsteampowered.com") is None

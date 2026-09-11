@@ -74,5 +74,21 @@ def by_method(book, method):
     return {host: entry for host, entry in book["entries"].items() if entry.get("method") == method}
 
 
+def holding(book, host):
+    """The entry explaining why `host` is reachable, if eve is behind it.
+
+    A pinned address covers that exact name and no other - the hosts file has
+    no notion of subdomains. A DPI entry does cover them, because zapret
+    applies a hostlist to subdomains automatically.
+    """
+    entry = book["entries"].get(host)
+    if entry:
+        return {"name": host, **entry}
+    for name, candidate in book["entries"].items():
+        if candidate.get("method") == "dpi" and host.endswith(f".{name}"):
+            return {"name": name, **candidate}
+    return None
+
+
 def qnum(book):
     return book.get("zapret", {}).get("qnum", DEFAULT_QNUM)

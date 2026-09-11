@@ -144,6 +144,21 @@ the machine to match. Everything eve touches is wholly its own and removable:
 `sync` exists because a pinned address rots when a CDN moves, and a pin that
 outlives its reason looks exactly like a broken site.
 
+`check` reads the ledger too, so a reachable verdict never gets mistaken for
+"nothing was ever wrong here":
+
+```
+$ eve route check medium.com
+medium.com  open - reachable - nothing in the way
+  held open by eve: pinned 162.159.153.4
+✓ medium.com is reachable because eve is holding it open (pinned 162.159.153.4).
+  Undo with `eve route rm medium.com`.
+```
+
+A DPI entry covers subdomains, because zapret applies a hostlist to them
+automatically — so `store.steampowered.com` reports as held by an entry for
+`steampowered.com`. A pin does not: the hosts file has no notion of subdomains.
+
 ### When the diagnosis is wrong
 
 The checker is not infallible. An intermittent block, one lucky handshake, or a

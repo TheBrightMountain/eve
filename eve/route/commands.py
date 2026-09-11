@@ -115,6 +115,9 @@ def check(hosts, timeout, addresses, samples, no_vn, as_json):
     name: if that one succeeds, the route is open and the block is keyed on the
     name. That is what separates **sni-blocked** from **ip-blocked**.
 
+    A host eve is already holding open is called out as such, so a reachable
+    verdict never gets mistaken for "nothing was ever wrong here".
+
     A single probe measures something that is not stable - a host can read
     `open` and then `sni-blocked` a minute later. Pass `-n` to sample several
     times; the worst verdict seen is the one reported, because an intermittent
@@ -122,7 +125,9 @@ def check(hosts, timeout, addresses, samples, no_vn, as_json):
 
     Pure Python sockets - no privileges, same behaviour on Windows and Linux.
     """
-    reports = [_sample(host, timeout, not no_vn, samples) for host in hosts]
+    # The ledger is world-readable on purpose, so this stays privilege-free.
+    book = ledger.load()
+    reports = [{**_sample(host, timeout, not no_vn, samples), "held": ledger.holding(book, host)} for host in hosts]
 
     if as_json:
         console.print_json(jsonlib.dumps(reports, ensure_ascii=False))

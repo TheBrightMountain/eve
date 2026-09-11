@@ -392,3 +392,62 @@ def test_a_single_sample_keeps_the_old_json_shape(monkeypatch, sandbox):
     payload = json.loads(CliRunner().invoke(cli, ["route", "check", "a.com", "--json"]).output)[0]
     assert payload["verdict"] == "open"
     assert "samples" not in payload
+
+
+# --- check knows what eve is holding open ------------------------------------
+
+
+def _with_ledger(sandbox, entries):
+    book = ledger.blank()
+    for host, kwargs in entries:
+        ledger.add_entry(book, host, **kwargs)
+    ledger.save(book, sandbox / "route.json")
+    return book
+
+
+def test_check_says_when_eve_is_holding_a_host_open(monkeypatch, sandbox):
+    _with_ledger(sandbox, [("a.com", {"method": "pin", "address": "1.2.3.4", "verdict": "dns-poisoned"})])
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.OPEN, best="1.2.3.4"))
+    output = CliRunner().invoke(cli, ["route", "check", "a.com"]).output
+    assert "1.2.3.4" in output
+    assert "holding" in output.lower() or "held" in output.lower()
+
+
+def test_check_does_not_claim_nothing_to_do_when_eve_is_doing_something(monkeypatch, sandbox):
+    _with_ledger(sandbox, [("a.com", {"method": "pin", "address": "1.2.3.4", "verdict": "dns-poisoned"})])
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.OPEN, best="1.2.3.4"))
+    output = CliRunner().invoke(cli, ["route", "check", "a.com"]).output
+    assert "Nothing to do" not in output
+
+
+def test_check_names_the_strategy_for_a_bypassed_host(monkeypatch, sandbox):
+    _with_ledger(sandbox, [("x.com", {"method": "dpi", "strategy": "--dpi-desync=fake", "verdict": "sni-blocked"})])
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.OPEN, best="1.2.3.4"))
+    output = CliRunner().invoke(cli, ["route", "check", "x.com"]).output
+    assert "--dpi-desync=fake" in output
+
+
+def test_an_unmanaged_host_is_reported_exactly_as_before(monkeypatch, sandbox):
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.OPEN, best="1.2.3.4"))
+    output = CliRunner().invoke(cli, ["route", "check", "stranger.com"]).output
+    assert "Nothing to do" in output
+    assert "holding" not in output.lower()
+
+
+def test_check_tells_you_how_to_undo_it(monkeypatch, sandbox):
+    _with_ledger(sandbox, [("a.com", {"method": "pin", "address": "1.2.3.4", "verdict": "dns-poisoned"})])
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.OPEN, best="1.2.3.4"))
+    assert "route rm a.com" in CliRunner().invoke(cli, ["route", "check", "a.com"]).output
+
+
+def test_json_reports_what_is_holding_the_host(monkeypatch, sandbox):
+    _with_ledger(sandbox, [("a.com", {"method": "pin", "address": "1.2.3.4", "verdict": "dns-poisoned"})])
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.OPEN, best="1.2.3.4"))
+    payload = json.loads(CliRunner().invoke(cli, ["route", "check", "a.com", "--json"]).output)[0]
+    assert payload["held"]["method"] == "pin"
+
+
+def test_check_still_needs_no_ledger_at_all(monkeypatch, sandbox):
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.OPEN, best="1.2.3.4"))
+    result = CliRunner().invoke(cli, ["route", "check", "a.com"])
+    assert result.exit_code == 0

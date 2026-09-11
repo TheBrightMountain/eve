@@ -55,6 +55,7 @@ def report(rep, addresses=False):
     )
 
     _sampling(rep)
+    _held(rep)
 
     if addresses:
         resolvers = _table("resolver", "answer")
@@ -88,14 +89,36 @@ def report(rep, addresses=False):
         else:
             info(f"Control test: SNI [accent]{control['sni']}[/accent] fails too - the address is the problem.")
 
+    held = rep.get("held")
     message = ADVICE[verdict].format(host=host)
     console.print()
-    if verdict == probe.OPEN:
+    if verdict == probe.OPEN and held:
+        # "Nothing to do" would be a lie: eve is doing something, continuously.
+        success(
+            f"{host} is reachable because eve is holding it open ({describe_held(held)}). "
+            f"Undo with `eve route rm {held['name']}`."
+        )
+    elif verdict == probe.OPEN:
         success(f"{host} is reachable. {message}")
     elif verdict == probe.DNS_POISONED:
         warning(f"DNS hands back a bogus address for {host}, but {rep['best']} works. {message}")
     else:
         error(f"{host}: {probe.VERDICT_TEXT[verdict]}. {message}")
+
+
+def describe_held(held):
+    """One phrase for what eve is doing to keep a host reachable."""
+    if held["method"] == "pin":
+        return f"pinned [accent]{held.get('address')}[/accent]"
+    return f"DPI bypass, [accent]{held.get('strategy')}[/accent]"
+
+
+def _held(rep):
+    held = rep.get("held")
+    if not held:
+        return
+    via = "" if held["name"] == rep["host"] else f" (via [accent]{held['name']}[/accent])"
+    console.print(f"  [accent]held open by eve[/accent]: {describe_held(held)}{via}")
 
 
 def _sampling(rep):
