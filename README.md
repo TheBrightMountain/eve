@@ -44,12 +44,17 @@ privileged commands from an elevated PowerShell.
 ### Removing it
 
 ```bash
-sudo eve route rm --all    # undo what eve is holding open, FIRST
+sudo eve route rm --all    # undo what eve is holding open, first
 ./install.sh uninstall
 ```
 
-The order matters: uninstalling first strands the hosts block, `/etc/eve`, and
-the `eve-route-dpi` service with nothing left to clean them up.
+The order matters, so the uninstaller enforces it: if the ledger still lists
+open routes it names them, refuses, and stops. Uninstalling first would strand
+the hosts block, `/etc/eve` and the `eve-route-dpi` service with nothing left
+that knows how to clean them up.
+
+`./install.sh uninstall --force` overrides it, if you mean to deal with them by
+hand.
 
 ### Working on it
 

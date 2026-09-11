@@ -17,6 +17,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 UV="${UV:-uv}"
 SYSTEM_BIN="${SYSTEM_BIN:-/usr/local/bin}"
+LEDGER="${LEDGER:-/etc/eve/route.json}"
 VENV=".venv"
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
@@ -63,8 +64,46 @@ cmd_install() {
     echo "Try:  eve route check example.com"
 }
 
+# Hosts eve is currently holding open, one per line.
+held_routes() {
+    [ -f "$LEDGER" ] || return 0
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import json,sys
+try:
+    print("\n".join(json.load(open(sys.argv[1])).get("entries", {})))
+except Exception:
+    pass' "$LEDGER" 2>/dev/null
+    else
+        # No python3: fall back to scraping the keys next to a "method" field.
+        grep -oE '"[^"]+": \{ *"method"' "$LEDGER" 2>/dev/null | cut -d'"' -f2
+    fi
+}
+
 cmd_uninstall() {
     need_uv
+
+    # Uninstalling while routes are open strands the hosts block, /etc/eve and
+    # the eve-route-dpi service with nothing left that knows how to undo them.
+    local held
+    held="$(held_routes)"
+    if [ -n "$held" ] && [ "${FORCE:-0}" != 1 ]; then
+        printf '\033[31m✗\033[0m eve is still holding %s route(s) open:\n' "$(printf '%s\n' "$held" | wc -l | tr -d ' ')" >&2
+        printf '%s\n' "$held" | sed 's/^/    /' >&2
+        cat >&2 <<'HINT'
+
+Undo them first, while eve is still installed to do it:
+
+    sudo eve route rm --all
+    ./install.sh uninstall
+
+Uninstalling now would strand the hosts block, /etc/eve and the eve-route-dpi
+service with nothing left that knows how to clean them up.
+
+Pass --force if you intend to deal with them by hand.
+HINT
+        exit 1
+    fi
+
     bold "Removing eve"
     if [ -L "$SYSTEM_BIN/eve" ] || [ -e "$SYSTEM_BIN/eve" ]; then
         sudo rm -f "$SYSTEM_BIN/eve" && ok "removed $SYSTEM_BIN/eve"
@@ -90,6 +129,16 @@ cmd_help() {
     # The header comment is the help text, up to the first non-comment line.
     awk 'NR>2 && /^#/ { sub(/^# ?/, ""); print; next } NR>2 { exit }' "${BASH_SOURCE[0]}"
 }
+
+FORCE=0
+args=()
+for arg in "$@"; do
+    case "$arg" in
+        -f|--force) FORCE=1 ;;
+        *) args+=("$arg") ;;
+    esac
+done
+set -- "${args[@]+"${args[@]}"}"
 
 case "${1:-install}" in
     install)   cmd_install ;;
