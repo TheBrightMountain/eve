@@ -285,10 +285,18 @@ unprivileged on Linux and covers the Windows backend by rendering.**
 
 ## 12. Risks and open questions
 
-1. **Strategy flags unvalidated.** The v72.13 binary was confirmed to run
-   (`--version` → `github version v72.13`), but the individual `--dpi-desync`
-   combinations in §9 have not been checked against its argument parser. First
-   implementation step: run `nfqws --help` and correct the ladder.
+1. ~~**Strategy flags unvalidated.**~~ **Closed 2026-09-11.** `nfqws --help`
+   for v72.13 confirms every mode in the §9 ladder (`fake`, `multisplit`,
+   `fakeddisorder`), the fooling value `badseq`, and the flags
+   `--dpi-desync-ttl` / `--dpi-desync-split-pos` / `--hostlist` / `--qnum`.
+   `tests/test_route_dpi.py` now asserts the ladder against that mode list, so
+   a future version bump that drops a mode fails the suite.
+
+1b. **The nft ruleset syntax is unvalidated.** `nft -c -f` needs netlink access
+   and unprivileged user namespaces are disabled on this machine, so neither
+   check could run. The systemd unit *was* validated (`systemd-analyze verify`
+   passes, with only the expected "binary not installed yet" note). Validate
+   with `sudo nft -c -f <file>` before first real use.
 2. **The Windows backend cannot be executed from this machine.** It is verified
    by rendered-output tests and `--dry-run` only. Bugs will surface on first
    real use on Windows; this is accepted, not solved.

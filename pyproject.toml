@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eve"
+version = "0.1.0"
+description = "eve - a personal toolbox of commands worth keeping"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "rich>=13.0",
+    "rich-click>=1.8",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-cov", "ruff>=0.16,<0.17"]
+
+[project.scripts]
+eve = "eve.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["eve*"]
+exclude = ["tests*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+extend-select = ["I"]
+ignore = ["BLE001"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["eve"]
