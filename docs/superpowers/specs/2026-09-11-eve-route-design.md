@@ -294,11 +294,12 @@ unprivileged on Linux and covers the Windows backend by rendering.**
    `tests/test_route_dpi.py` now asserts the ladder against that mode list, so
    a future version bump that drops a mode fails the suite.
 
-1b. **The nft ruleset syntax is unvalidated.** `nft -c -f` needs netlink access
-   and unprivileged user namespaces are disabled on this machine, so neither
-   check could run. The systemd unit *was* validated (`systemd-analyze verify`
-   passes, with only the expected "binary not installed yet" note). Validate
-   with `sudo nft -c -f <file>` before first real use.
+1b. ~~**The nft ruleset syntax is unvalidated.**~~ **Closed 2026-09-11.**
+   `sudo nft -c -f` accepts the ruleset with no output, including the QUIC UDP
+   clause added in §12a. The systemd unit likewise passes `systemd-analyze
+   verify` (only the expected "binary not installed yet" note), and the nfqws
+   argument syntax was confirmed against the binary itself. Every generated
+   artefact is now validated by the tool that will consume it.
 2. **The Windows backend cannot be executed from this machine.** It is verified
    by rendered-output tests and `--dry-run` only. Bugs will surface on first
    real use on Windows; this is accepted, not solved.
