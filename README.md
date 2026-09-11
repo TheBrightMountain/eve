@@ -90,6 +90,7 @@ open and the block is keyed on the name — which is what separates
 eve route check <host>...   diagnose only, changes nothing, needs no privilege
     -a / --addresses        show every address and how each one answered
 eve route add <host>        diagnose → apply the fix that fits → verify → record
+    --method pin|dpi        force a fix instead of following the diagnosis
 eve route rm <host> | --all undo and forget
 eve route ls                every route eve is holding open
 eve route sync              re-check them all; re-pin whatever went stale
@@ -112,6 +113,31 @@ the machine to match. Everything eve touches is wholly its own and removable:
 
 `sync` exists because a pinned address rots when a CDN moves, and a pin that
 outlives its reason looks exactly like a broken site.
+
+### When the diagnosis is wrong
+
+The checker is not infallible. An intermittent block, one lucky handshake, or a
+resolver that answers differently for a single query can all make a blocked host
+look fine. So `add` never refuses on a clean verdict — it warns and pins anyway:
+
+```
+$ eve route add a.com
+Diagnosis: open - reachable - nothing in the way
+! a.com looks reachable, but the check is not infallible - continuing anyway.
+✓ Pinned 1.2.3.4 for a.com
+```
+
+If you don't trust the diagnosis at all, `--method` overrides it outright —
+including for `ip-blocked` and `unreachable`, which `auto` refuses because they
+genuinely call for a tunnel:
+
+```
+$ eve route add a.com --method dpi
+! Forcing dpi - ignoring the diagnosis (open).
+```
+
+The one thing it cannot do is invent an address: `--method pin` still fails when
+nothing resolved.
 
 ### The DPI bypass
 

@@ -19,8 +19,44 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "ledger_path", lambda: tmp_path / "route.json")
     monkeypatch.setattr(paths, "hosts_path", lambda: hosts_file)
     monkeypatch.setattr(paths, "dpi_hostlist_path", lambda: tmp_path / "route-dpi.txt")
+    monkeypatch.setattr(paths, "zapret_dir", lambda: tmp_path / "zapret")
     monkeypatch.setattr(paths, "is_admin", lambda: True)
     return tmp_path
+
+
+class StubBackend:
+    """A DPI backend that records instead of installing or shelling out."""
+
+    def available(self):
+        return True, None
+
+    def present(self):
+        return False
+
+    def install(self):
+        return None
+
+    def write_hostlist(self, hosts):
+        self.hosts = list(hosts)
+
+    def apply(self, strategy):
+        self.strategy = strategy
+
+    def state(self):
+        return {"installed": False, "running": False}
+
+    def teardown(self):
+        pass
+
+    def plan(self, strategy, hosts):
+        return [f"would run {strategy} for {', '.join(hosts)}"]
+
+
+@pytest.fixture
+def stub_dpi(monkeypatch):
+    backend = StubBackend()
+    monkeypatch.setattr("eve.route.dpi.backend", lambda name=None: backend)
+    return backend
 
 
 def _report(host, verdict, best=None):
@@ -101,13 +137,6 @@ def test_add_dry_run_writes_nothing(monkeypatch, sandbox):
     assert "1.2.3.4" in result.output
 
 
-def test_add_on_a_reachable_host_does_nothing(monkeypatch, sandbox):
-    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.OPEN, best="1.2.3.4"))
-    result = CliRunner().invoke(cli, ["route", "add", "a.com"])
-    assert result.exit_code == 0
-    assert not (sandbox / "route.json").exists()
-
-
 def test_add_refuses_a_block_it_cannot_fix(monkeypatch, sandbox):
     monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.IP_BLOCKED))
     result = CliRunner().invoke(cli, ["route", "add", "a.com"])
@@ -163,3 +192,77 @@ def test_writing_commands_refuse_without_privilege(monkeypatch, sandbox):
     result = CliRunner().invoke(cli, ["route", "add", "medium.com"])
     assert result.exit_code == 1
     assert "sudo" in result.output.lower() or "administrator" in result.output.lower()
+
+
+# --- overriding the diagnosis -----------------------------------------------
+#
+# The checker is not infallible: an intermittent block, a lucky handshake or a
+# resolver that behaves differently for one query can all make a blocked host
+# look reachable. `add` must never be the thing standing between you and a fix.
+
+
+def test_add_pins_a_host_the_checker_calls_reachable(monkeypatch, sandbox):
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.OPEN, best="1.2.3.4"))
+    monkeypatch.setattr(probe, "reachable", lambda h, **kw: True)
+    result = CliRunner().invoke(cli, ["route", "add", "a.com"])
+    assert result.exit_code == 0, result.output
+    assert ledger.load(sandbox / "route.json")["entries"]["a.com"]["address"] == "1.2.3.4"
+
+
+def test_add_says_it_is_overriding_a_reachable_verdict(monkeypatch, sandbox):
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.OPEN, best="1.2.3.4"))
+    monkeypatch.setattr(probe, "reachable", lambda h, **kw: True)
+    output = CliRunner().invoke(cli, ["route", "add", "a.com"]).output
+    assert "open" in output
+    assert "anyway" in output.lower() or "continuing" in output.lower()
+
+
+def test_method_pin_is_honoured_without_consulting_the_verdict(monkeypatch, sandbox):
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.SNI_BLOCKED, best="1.2.3.4"))
+    monkeypatch.setattr(probe, "reachable", lambda h, **kw: True)
+    result = CliRunner().invoke(cli, ["route", "add", "a.com", "--method", "pin"])
+    assert result.exit_code == 0, result.output
+    assert ledger.load(sandbox / "route.json")["entries"]["a.com"]["method"] == "pin"
+
+
+def test_method_dpi_overrides_a_reachable_verdict(monkeypatch, sandbox, stub_dpi):
+    """The case pinning cannot solve: 'open' is wrong and the truth is DPI."""
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.OPEN, best="1.2.3.4"))
+    monkeypatch.setattr(probe, "reachable", lambda h, **kw: True)
+    monkeypatch.setattr("eve.route.strategy.find", lambda *a, **kw: "--dpi-desync=fake")
+    result = CliRunner().invoke(cli, ["route", "add", "a.com", "--method", "dpi"])
+    assert result.exit_code == 0, result.output
+    entry = ledger.load(sandbox / "route.json")["entries"]["a.com"]
+    assert entry["method"] == "dpi"
+    assert entry["strategy"] == "--dpi-desync=fake"
+
+
+def test_ip_blocked_still_refuses_by_default(monkeypatch, sandbox):
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.IP_BLOCKED))
+    result = CliRunner().invoke(cli, ["route", "add", "a.com"])
+    assert result.exit_code == 1
+    assert "tunnel" in result.output.lower()
+
+
+def test_but_an_explicit_method_pushes_through_ip_blocked(monkeypatch, sandbox, stub_dpi):
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.IP_BLOCKED))
+    monkeypatch.setattr(probe, "reachable", lambda h, **kw: False)
+    monkeypatch.setattr("eve.route.strategy.find", lambda *a, **kw: "--dpi-desync=fake")
+    result = CliRunner().invoke(cli, ["route", "add", "a.com", "--method", "dpi"])
+    assert result.exit_code == 0, result.output
+    assert ledger.load(sandbox / "route.json")["entries"]["a.com"]["method"] == "dpi"
+
+
+def test_pinning_still_needs_an_address_to_pin(monkeypatch, sandbox):
+    """--method pin cannot invent one when nothing resolved."""
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.UNREACHABLE))
+    result = CliRunner().invoke(cli, ["route", "add", "a.com", "--method", "pin"])
+    assert result.exit_code == 1
+    assert "address" in result.output.lower()
+
+
+def test_dry_run_still_writes_nothing_when_forced(monkeypatch, sandbox):
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.OPEN, best="1.2.3.4"))
+    result = CliRunner().invoke(cli, ["route", "add", "a.com", "--method", "pin", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert not (sandbox / "route.json").exists()

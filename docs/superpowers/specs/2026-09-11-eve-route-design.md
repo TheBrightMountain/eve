@@ -64,9 +64,14 @@ eve route sync                re-verify every entry; re-pin stale addresses,
 Changes from evo-cli's `check / probe / open / close / status`:
 
 - `probe` folded into `check --addresses`; they were ~80% the same operation.
-- `--method hosts|dpi` dropped. Which mechanism a block needs is a fact the
-  diagnosis establishes, not a thing the user should have to know. A
-  `--method` escape hatch may return if auto-detection proves wrong in practice.
+- `--method hosts|dpi` dropped, then **reinstated 2026-09-11** as
+  `--method pin|dpi`, exactly as this line anticipated. Auto-detection did prove
+  fallible in practice: an intermittent block or a single lucky handshake can
+  read as `open`. Two changes followed. `auto` no longer refuses on a clean
+  verdict - it warns and pins anyway, since refusing to act on a false negative
+  is the worst outcome. And an explicit `--method` bypasses the diagnosis
+  entirely, including the `ip-blocked` / `unreachable` verdicts that `auto`
+  still declines. Pinning remains impossible without a resolved address.
 - `open`/`close` → `add`/`rm`, because they now mutate a record rather than
   poke the system directly.
 - `sync` is new. It is the answer to a flaw evo-cli's `status` could only

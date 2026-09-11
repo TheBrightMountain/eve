@@ -16,6 +16,36 @@ DRY_RUN = click.option("-n", "--dry-run", is_flag=True, help="Say what would cha
 
 FIXABLE = {probe.DNS_POISONED: "pin", probe.SNI_BLOCKED: "dpi"}
 
+# What `auto` falls back to when the diagnosis found nothing wrong. The checker
+# is not infallible - an intermittent block, a lucky handshake, or a resolver
+# that answers differently for one query can all make a blocked host look fine
+# - so a clean verdict is a reason to warn, not a reason to refuse.
+WHEN_NOTHING_WRONG = "pin"
+
+
+def _choose_method(rep, requested):
+    """Decide which fix to apply, or bail out if there is nothing sensible.
+
+    An explicit `--method` always wins: it exists precisely for the times the
+    diagnosis is wrong, so it must not be second-guessed here.
+    """
+    verdict = rep["verdict"]
+
+    if requested != "auto":
+        warning(f"Forcing [accent]{requested}[/accent] - ignoring the diagnosis ({verdict}).")
+        return requested
+
+    if verdict in FIXABLE:
+        return FIXABLE[verdict]
+
+    if verdict == probe.OPEN:
+        warning(f"{rep['host']} looks reachable, but the check is not infallible - continuing anyway.")
+        return WHEN_NOTHING_WRONG
+
+    error(f"{probe.VERDICT_TEXT[verdict]} - this needs a tunnel or VPN, which eve will not set up for you.")
+    info("If you know better, force one with `--method pin` or `--method dpi`.")
+    sys.exit(1)
+
 
 def _require_admin(action):
     if paths.is_admin():
@@ -69,15 +99,28 @@ def check(hosts, timeout, addresses, no_vn, as_json):
 
 @click.command("add")
 @click.argument("host")
+@click.option(
+    "--method",
+    "requested",
+    type=click.Choice(["auto", "pin", "dpi"]),
+    default="auto",
+    show_default=True,
+    help="Which fix to apply. `auto` follows the diagnosis.",
+)
 @TIMEOUT
 @DRY_RUN
-def add(host, timeout, dry_run):
+def add(host, requested, timeout, dry_run):
     """Make `HOST` reachable, and remember how.
 
-    Diagnoses first, then applies only the fix the diagnosis calls for: a
-    poisoned name gets its real address pinned, a name-keyed DPI block gets the
+    Diagnoses first, then applies the fix that diagnosis calls for: a poisoned
+    name gets its real address pinned, a name-keyed DPI block gets the
     packet-level bypass. The result is recorded so `eve route sync` can keep it
     working when a CDN moves.
+
+    A clean verdict does **not** stop it. The checker can be wrong - an
+    intermittent block or one lucky handshake is enough - so a host that looks
+    reachable is pinned anyway, with a warning. Use `--method` when you do not
+    trust the diagnosis at all.
     """
     step(f"eve route add {host}")
     with console.status(f"[info]diagnosing {host}...[/info]", spinner="dots"):
@@ -86,18 +129,14 @@ def add(host, timeout, dry_run):
     verdict = rep["verdict"]
     console.print(f"Diagnosis: [bold]{verdict}[/bold] - {probe.VERDICT_TEXT[verdict]}")
 
-    if verdict == probe.OPEN:
-        success(f"{host} is already reachable - nothing to do.")
-        return rep
-    if verdict not in FIXABLE:
-        error(f"{probe.VERDICT_TEXT[verdict]} - this needs a tunnel or VPN, which eve will not set up for you.")
-        sys.exit(1)
-
-    method = FIXABLE[verdict]
+    method = _choose_method(rep, requested)
     book = ledger.load()
     backend = dpi.backend()
 
     if method == "pin":
+        if not rep["best"]:
+            error(f"No working address for {host} to pin - nothing resolved or answered.")
+            sys.exit(1)
         ledger.add_entry(book, host, method="pin", verdict=verdict, address=rep["best"])
     else:
         ok, reason = backend.available()
