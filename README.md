@@ -41,6 +41,25 @@ script and use `sudo $(which eve)` instead.
 On Windows there is no such split — `uv tool install` is enough; run the
 privileged commands from an elevated PowerShell.
 
+### Updating
+
+```bash
+uv tool upgrade eve
+```
+
+Re-fetches the latest commit on `main`. If you installed from a clone instead,
+that would rebuild from your local directory — pull first:
+
+```bash
+cd /path/to/eve && git pull && ./install.sh
+```
+
+The `/usr/local/bin` link survives either, because it points at
+`~/.local/bin/eve`, which uv recreates on every install.
+
+The version string doesn't move between commits, so `eve --version` won't tell
+you whether an upgrade landed. `uv tool list` shows the git revision.
+
 ### Removing it
 
 ```bash
