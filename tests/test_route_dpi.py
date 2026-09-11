@@ -235,3 +235,203 @@ def test_windows_command_line_carries_both_profiles():
     line = dpi_windows.command_line("--dpi-desync=fake")
     assert "--new" in line
     assert "--filter-l7=quic" in line
+
+
+# --- Windows service lifecycle ----------------------------------------------
+
+
+class FakeSc:
+    """A stand-in for sc.exe that reproduces Windows' deletion semantics.
+
+    A deleted service is not gone: it stays "marked for deletion", still
+    visible to `sc qc`, until every handle to it closes. Creating one in that
+    window fails with 1072 - which is exactly what a delete immediately
+    followed by a create walks into. Each SCM call stands in for a handle
+    getting a chance to close.
+    """
+
+    def __init__(self, settle_polls=2):
+        self.services = {}
+        self.deleting = {}
+        self.settle_polls = settle_polls
+        self.calls = []
+
+    def __call__(self, argv, **kwargs):
+        import subprocess as sp
+
+        self.calls.append(argv)
+        verb = argv[1] if len(argv) > 1 else ""
+        name = argv[2] if len(argv) > 2 else ""
+
+        entry = self.deleting.get(name)
+        if entry is not None:
+            entry["polls"] -= 1
+            if entry["polls"] <= 0:
+                del self.deleting[name]
+
+        def result(code, out=""):
+            return sp.CompletedProcess(argv, code, stdout=out, stderr="")
+
+        if verb == "create":
+            if name in self.deleting:
+                return result(
+                    1,
+                    "[SC] CreateService FAILED 1072:\n\nThe specified service has been marked for deletion.",
+                )
+            self.services[name] = {"binpath": argv[argv.index("binPath=") + 1], "running": False}
+            return result(0)
+
+        if verb == "delete":
+            svc = self.services.pop(name, None)
+            if svc is None:
+                return result(1060)
+            self.deleting[name] = {"polls": self.settle_polls, "binpath": svc["binpath"]}
+            return result(0)
+
+        if verb == "qc":
+            svc = self.services.get(name) or self.deleting.get(name)
+            if not svc:
+                return result(1060, "The specified service does not exist")
+            return result(0, f"SERVICE_NAME: {name}\n  BINARY_PATH_NAME   : {svc['binpath']}\n")
+
+        if verb == "query":
+            svc = self.services.get(name)
+            if not svc:
+                return result(1060, "The specified service does not exist")
+            return result(0, f"STATE : 4  {'RUNNING' if svc['running'] else 'STOPPED'}")
+
+        if verb == "start":
+            if name not in self.services:
+                return result(1060)
+            self.services[name]["running"] = True
+            return result(0)
+
+        if verb == "stop":
+            if name in self.services:
+                self.services[name]["running"] = False
+            return result(0)
+
+        return result(0)
+
+    def creates(self):
+        return [c for c in self.calls if len(c) > 1 and c[1] == "create"]
+
+
+@pytest.fixture
+def fake_sc(monkeypatch, tmp_path):
+    sc = FakeSc()
+    monkeypatch.setattr(dpi_windows.subprocess, "run", sc)
+    monkeypatch.setattr(dpi_windows.paths, "dpi_hostlist_path", lambda: tmp_path / "route-dpi.txt")
+    monkeypatch.setattr(dpi_windows.paths, "zapret_dir", lambda: tmp_path / "zapret")
+    monkeypatch.setattr(dpi_windows.time, "sleep", lambda _s: None)
+    return sc
+
+
+def test_applying_the_same_strategy_twice_does_not_blow_up(fake_sc):
+    """The ladder applies a strategy, then reconcile applies the same one again."""
+    backend = dpi_windows.WindowsBackend()
+    backend.apply("--dpi-desync=fake --dpi-desync-ttl=4")
+    backend.apply("--dpi-desync=fake --dpi-desync-ttl=4")
+    assert fake_sc.services[dpi_windows.SERVICE]["running"]
+
+
+def test_a_matching_service_is_left_alone_rather_than_rebuilt(fake_sc):
+    backend = dpi_windows.WindowsBackend()
+    backend.apply("--dpi-desync=fake")
+    backend.apply("--dpi-desync=fake")
+    assert len(fake_sc.creates()) == 1, "rebuilt a service that was already correct"
+
+
+def test_changing_strategy_waits_for_the_deletion_to_settle(fake_sc):
+    """Even a genuine rebuild hits 1072 if it does not wait."""
+    backend = dpi_windows.WindowsBackend()
+    backend.apply("--dpi-desync=fake")
+    backend.apply("--dpi-desync=multisplit --dpi-desync-split-pos=1")
+    assert len(fake_sc.creates()) == 2
+    assert "multisplit" in fake_sc.services[dpi_windows.SERVICE]["binpath"]
+
+
+def test_a_stopped_service_with_the_right_config_is_just_started(fake_sc):
+    backend = dpi_windows.WindowsBackend()
+    backend.apply("--dpi-desync=fake")
+    fake_sc.services[dpi_windows.SERVICE]["running"] = False
+    backend.apply("--dpi-desync=fake")
+    assert fake_sc.services[dpi_windows.SERVICE]["running"]
+    assert len(fake_sc.creates()) == 1
+
+
+def test_a_deletion_that_never_settles_reports_clearly(fake_sc, monkeypatch):
+    monkeypatch.setattr(dpi_windows, "DELETION_TIMEOUT", 0.05)
+    fake_sc.settle_polls = 10**6
+    backend = dpi_windows.WindowsBackend()
+    backend.apply("--dpi-desync=fake")
+    with pytest.raises(RuntimeError, match="marked for deletion"):
+        backend.apply("--dpi-desync=multisplit")
+
+
+# --- Linux service lifecycle -------------------------------------------------
+#
+# Same defect as the Windows 1072 crash, milder symptom: reconcile runs after
+# the ladder has already applied the winning strategy, so an unconditional
+# restart drops live connections for no reason.
+
+
+class FakeRun:
+    def __init__(self, active=False, table=False):
+        self.calls = []
+        self.active = active
+        self.table = table
+
+    def __call__(self, cmd, check=False, input_text=None):
+        import subprocess as sp
+
+        self.calls.append(cmd)
+        joined = " ".join(cmd)
+        if "is-active" in joined:
+            return sp.CompletedProcess(cmd, 0, stdout="active\n" if self.active else "inactive\n", stderr="")
+        if "list" in joined and "table" in joined:
+            return sp.CompletedProcess(cmd, 0 if self.table else 1, stdout="", stderr="")
+        if cmd[:2] == ["systemctl", "enable"] or "restart" in joined:
+            self.active = True
+        if cmd[:2] == ["nft", "-f"]:
+            self.table = True
+        return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    def verbs(self, tool):
+        return [" ".join(c) for c in self.calls if c and c[0] == tool]
+
+
+@pytest.fixture
+def fake_linux(monkeypatch, tmp_path):
+    run = FakeRun()
+    monkeypatch.setattr(dpi_linux, "_run", run)
+    monkeypatch.setattr(dpi_linux, "UNIT_PATH", tmp_path / "eve-route-dpi.service")
+    monkeypatch.setattr(dpi_linux.paths, "dpi_hostlist_path", lambda: tmp_path / "route-dpi.txt")
+    monkeypatch.setattr(dpi_linux.paths, "zapret_dir", lambda: tmp_path / "zapret")
+    return run
+
+
+def test_linux_does_not_restart_a_service_already_running_the_strategy(fake_linux):
+    backend = dpi_linux.LinuxBackend()
+    backend.apply("--dpi-desync=fake")
+    before = len([c for c in fake_linux.verbs("systemctl") if "restart" in c])
+    backend.apply("--dpi-desync=fake")
+    after = len([c for c in fake_linux.verbs("systemctl") if "restart" in c])
+    assert after == before, "restarted a service that was already correct"
+
+
+def test_linux_does_restart_when_the_strategy_changes(fake_linux):
+    backend = dpi_linux.LinuxBackend()
+    backend.apply("--dpi-desync=fake")
+    backend.apply("--dpi-desync=multisplit --dpi-desync-split-pos=1")
+    assert "multisplit" in (dpi_linux.UNIT_PATH).read_text(encoding="utf-8")
+    assert any("restart" in c for c in fake_linux.verbs("systemctl"))
+
+
+def test_linux_reinstates_the_ruleset_if_it_went_missing(fake_linux):
+    """The unit can be fine while a firewall flush took the table with it."""
+    backend = dpi_linux.LinuxBackend()
+    backend.apply("--dpi-desync=fake")
+    fake_linux.table = False
+    backend.apply("--dpi-desync=fake")
+    assert fake_linux.table

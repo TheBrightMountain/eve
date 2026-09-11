@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json as jsonlib
 import os
 import sys
@@ -55,6 +56,24 @@ def _require_admin(action):
     sys.exit(1)
 
 
+RECOVERY_HINT = (
+    "The ledger still records what eve was trying to do - `eve route ls` shows it, "
+    "`eve route sync` retries, `eve route rm <host>` undoes it."
+)
+
+
+@contextlib.contextmanager
+def _reporting(hint=None):
+    """Turn a backend failure into an error message rather than a traceback."""
+    try:
+        yield
+    except (RuntimeError, OSError) as exc:
+        error(str(exc))
+        if hint:
+            info(hint)
+        sys.exit(1)
+
+
 def _apply(book, backend, dry_run, action):
     if dry_run:
         step("Would change")
@@ -62,8 +81,14 @@ def _apply(book, backend, dry_run, action):
             console.print(f"  {line}")
         return False
     _require_admin(action)
-    reconcile.apply(book, backend)
+
+    # Record the intent before touching the machine. If applying then fails
+    # part-way, the ledger still knows what eve was doing, so `ls` can show it
+    # and `rm` can undo it. The other order strands real system state - a
+    # running service, an edited hosts file - with no record of it anywhere.
     ledger.save(book)
+    with _reporting(RECOVERY_HINT):
+        reconcile.apply(book, backend)
     return True
 
 
@@ -147,17 +172,18 @@ def add(host, requested, timeout, dry_run):
             ledger.add_entry(book, host, method="dpi", verdict=verdict, strategy=strategy.LADDER[0])
         else:
             _require_admin("Installing the DPI bypass")
-            backend.install()
-            hosts = sorted(set(ledger.by_method(book, "dpi")) | {host})
-            step("Finding a strategy that gets through")
-            found = strategy.find(
-                host,
-                backend,
-                hosts,
-                verify=lambda h: probe.reachable(h, timeout=timeout),
-                preferred=reconcile.desired(book)["strategy"],
-                on_try=lambda c: info(f"trying [accent]{c}[/accent]"),
-            )
+            with _reporting():
+                backend.install()
+                hosts = sorted(set(ledger.by_method(book, "dpi")) | {host})
+                step("Finding a strategy that gets through")
+                found = strategy.find(
+                    host,
+                    backend,
+                    hosts,
+                    verify=lambda h: probe.reachable(h, timeout=timeout),
+                    preferred=reconcile.desired(book)["strategy"],
+                    on_try=lambda c: info(f"trying [accent]{c}[/accent]"),
+                )
             if not found:
                 error("No strategy in the ladder got through. The bypass has been removed again.")
                 sys.exit(1)

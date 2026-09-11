@@ -7,12 +7,19 @@ Simpler than Linux in one respect: WinDivert filters traffic in-process via
 from __future__ import annotations
 
 import subprocess
+import time
 from pathlib import Path
 
 from eve.route import dpi, paths
 
 SERVICE = "eve-route-dpi"
 WF_FILTER = "--wf-tcp=80,443 --wf-udp=443"
+
+# A deleted Windows service is not gone: it stays "marked for deletion" until
+# every handle to it closes, and `sc create` in that window fails with 1072.
+# There is no way to hurry it along, only to wait.
+DELETION_TIMEOUT = 30.0
+DELETION_POLL = 0.5
 
 
 def binary():
@@ -39,6 +46,11 @@ def create_argv(strategy, hostlist=None, exe=None):
         "start=",
         "auto",
     ]
+
+
+def _same_command(current, wanted):
+    """Compare service command lines, ignoring how sc.exe spaces things out."""
+    return " ".join((current or "").split()) == " ".join((wanted or "").split())
 
 
 def _sc(*args):
@@ -69,10 +81,41 @@ class WindowsBackend:
         path.write_text("\n".join(hosts) + "\n" if hosts else "", encoding="utf-8")
         return path
 
+    def _wait_until_gone(self, timeout):
+        """Block until the SCM has really let go of the service."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if _sc("qc", SERVICE).returncode != 0:
+                return True
+            time.sleep(DELETION_POLL)
+        return _sc("qc", SERVICE).returncode != 0
+
     def apply(self, strategy):
-        if self.state()["installed"]:
+        """Bring the service in line with `strategy`, doing nothing if it already is.
+
+        Reconcile runs after the strategy ladder has already applied the winning
+        strategy, so this is routinely called with a configuration that is
+        already in place. Tearing the service down to rebuild it identically is
+        both wasteful and, on Windows, the thing that trips 1072.
+        """
+        wanted = command_line(strategy)
+        current = self.state()
+
+        if current["installed"] and _same_command(current["args"], wanted):
+            if not current["running"]:
+                _sc("start", SERVICE)
+            return self.state()
+
+        if current["installed"]:
             _sc("stop", SERVICE)
             _sc("delete", SERVICE)
+            if not self._wait_until_gone(DELETION_TIMEOUT):
+                raise RuntimeError(
+                    f"{SERVICE} is still marked for deletion after {DELETION_TIMEOUT:.0f}s. "
+                    "Something is holding a handle to it - close services.msc or Task Manager, "
+                    "or reboot, then try again."
+                )
+
         created = subprocess.run(create_argv(strategy), capture_output=True, text=True, errors="replace", check=False)
         if created.returncode != 0:
             raise RuntimeError((created.stdout or created.stderr or "sc create failed").strip())

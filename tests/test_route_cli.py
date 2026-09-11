@@ -266,3 +266,59 @@ def test_dry_run_still_writes_nothing_when_forced(monkeypatch, sandbox):
     result = CliRunner().invoke(cli, ["route", "add", "a.com", "--method", "pin", "--dry-run"])
     assert result.exit_code == 0, result.output
     assert not (sandbox / "route.json").exists()
+
+
+# --- when a backend fails ----------------------------------------------------
+#
+# Observed on Windows: sc create failed with 1072 and the RuntimeError escaped
+# as a traceback, after the ladder had already created the service but before
+# the ledger was saved - leaving a live bypass that `ls` could not see and `rm`
+# could not undo.
+
+
+class ExplodingBackend(StubBackend):
+    def apply(self, strategy):
+        raise RuntimeError("[SC] CreateService FAILED 1072: marked for deletion")
+
+
+@pytest.fixture
+def exploding_dpi(monkeypatch):
+    backend = ExplodingBackend()
+    monkeypatch.setattr("eve.route.dpi.backend", lambda name=None: backend)
+    return backend
+
+
+def test_a_backend_failure_is_reported_not_raised(monkeypatch, sandbox, exploding_dpi):
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.SNI_BLOCKED))
+    monkeypatch.setattr("eve.route.strategy.find", lambda *a, **kw: "--dpi-desync=fake")
+    result = CliRunner().invoke(cli, ["route", "add", "x.com"])
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "1072" in result.output
+
+
+def test_the_ledger_survives_a_failed_apply(monkeypatch, sandbox, exploding_dpi):
+    """Otherwise the fix is live on the machine with no record eve can act on."""
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.SNI_BLOCKED))
+    monkeypatch.setattr("eve.route.strategy.find", lambda *a, **kw: "--dpi-desync=fake")
+    CliRunner().invoke(cli, ["route", "add", "x.com"])
+    assert "x.com" in ledger.load(sandbox / "route.json")["entries"]
+
+
+def test_the_failure_says_how_to_recover(monkeypatch, sandbox, exploding_dpi):
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.SNI_BLOCKED))
+    monkeypatch.setattr("eve.route.strategy.find", lambda *a, **kw: "--dpi-desync=fake")
+    output = CliRunner().invoke(cli, ["route", "add", "x.com"]).output
+    assert "route rm" in output or "route sync" in output
+
+
+def test_a_failure_while_installing_is_reported_too(monkeypatch, sandbox, stub_dpi):
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.SNI_BLOCKED))
+
+    def boom():
+        raise RuntimeError("refusing a tampered download - sha256 mismatch on nfqws")
+
+    monkeypatch.setattr(stub_dpi, "install", boom)
+    result = CliRunner().invoke(cli, ["route", "add", "x.com"])
+    assert result.exit_code == 1
+    assert "sha256 mismatch" in result.output

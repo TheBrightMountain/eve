@@ -22,7 +22,5 @@ def test_version_starts_from_a_tag():
 
 
 def test_cli_reports_the_same_version():
-    out = subprocess.run(
-        [sys.executable, "-m", "eve", "--version"], capture_output=True, text=True, check=True
-    ).stdout
+    out = subprocess.run([sys.executable, "-m", "eve", "--version"], capture_output=True, text=True, check=True).stdout
     assert eve.__version__ in out

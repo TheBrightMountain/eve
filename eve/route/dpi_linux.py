@@ -85,12 +85,29 @@ class LinuxBackend:
         return path
 
     def apply(self, strategy, qnum=DEFAULT_QNUM):
-        UNIT_PATH.write_text(unit_text(strategy, qnum=qnum), encoding="utf-8")
-        _run(["systemctl", "daemon-reload"])
-        _run(["systemctl", "enable", "--now", SERVICE])
-        _run(["systemctl", "restart", SERVICE])
-        _run(["nft", "delete", "table", "inet", TABLE])
-        _run(["nft", "-f", "-"], input_text=nft_ruleset(qnum))
+        """Bring the daemon and ruleset in line, touching only what has drifted.
+
+        Reconcile runs after the strategy ladder has already applied the
+        winning strategy, so this is routinely called with everything already
+        in place. Restarting nfqws anyway would drop live connections for no
+        reason - and on Windows the equivalent churn is what trips 1072.
+        """
+        wanted = unit_text(strategy, qnum=qnum)
+        current = UNIT_PATH.read_text(encoding="utf-8") if UNIT_PATH.exists() else None
+        state = self.state()
+
+        if current != wanted:
+            UNIT_PATH.write_text(wanted, encoding="utf-8")
+            _run(["systemctl", "daemon-reload"])
+            _run(["systemctl", "enable", "--now", SERVICE])
+            _run(["systemctl", "restart", SERVICE])
+        elif not state["running"]:
+            _run(["systemctl", "enable", "--now", SERVICE])
+
+        # The unit can be perfectly fine while a firewall flush has taken the
+        # table with it, so this is checked independently of the daemon.
+        if not state["rules"]:
+            _run(["nft", "-f", "-"], input_text=nft_ruleset(qnum))
         return self.state()
 
     def state(self):
