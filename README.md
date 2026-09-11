@@ -57,8 +57,18 @@ cd /path/to/eve && git pull && ./install.sh
 The `/usr/local/bin` link survives either, because it points at
 `~/.local/bin/eve`, which uv recreates on every install.
 
-The version string doesn't move between commits, so `eve --version` won't tell
-you whether an upgrade landed. `uv tool list` shows the git revision.
+`eve --version` tells you exactly what you're running: the version comes from
+git tags via setuptools-scm, so it moves with the code.
+
+```
+0.1.0                     exactly the v0.1.0 tag
+0.1.1.dev4+g18e2da7       4 commits past it, at 18e2da7
+0.1.1.dev4+g18e2da7.d20260911   ...and the tree was dirty
+0.0.0+unknown             built with no git history to read
+```
+
+Cutting a release is `git tag -a v0.2.0 -m ... && git push --follow-tags` —
+nothing to bump by hand.
 
 ### Removing it
 
