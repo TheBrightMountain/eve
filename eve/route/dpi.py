@@ -34,6 +34,34 @@ ARTIFACTS = {
 }
 
 
+# A browser falling back to HTTP/3 on UDP 443 would route straight around a
+# TCP-only bypass. Corrupting the QUIC Initial makes its AEAD tag fail to
+# authenticate, so the server cannot decrypt it and the browser drops back to
+# TCP - where the bypass already works and the TCP probe can verify it.
+# `tamper` is one of the eight modes zapret documents as UDP-applicable.
+QUIC_DESYNC = "--dpi-desync=tamper"
+
+
+def daemon_args(strategy, hostlist):
+    """The two profiles both backends run: TCP desync, then QUIC knock-back.
+
+    `--filter-tcp` on the first profile is load-bearing - nfqws denies UDP to a
+    profile that sets a tcp filter and no udp filter, which is what keeps the
+    two from fighting over the same packets. Both carry the hostlist, so hosts
+    eve does not manage keep their HTTP/3.
+    """
+    return [
+        "--filter-tcp=80,443",
+        f"--hostlist={hostlist}",
+        *strategy.split(),
+        "--new",
+        "--filter-udp=443",
+        "--filter-l7=quic",
+        f"--hostlist={hostlist}",
+        QUIC_DESYNC,
+    ]
+
+
 def sha256_bytes(blob):
     return hashlib.sha256(blob).hexdigest()
 

@@ -198,11 +198,13 @@ Linux needs that one 123 KB file and nothing else. `winws.exe` imports
 ```
 # nft — `bypass` is the safety valve: if nfqws dies, traffic flows normally
 #        instead of the network hanging.
-# `ct original packets 1-8` queues only the handshake, not every packet.
+# `ct original packets` queues only the handshake, not every packet. QUIC gets
+# 6 rather than 8, matching zapret's example, to cover Initial retransmissions.
 table inet eve_route {
   chain postrouting {
     type filter hook postrouting priority mangle;
     tcp dport { 80, 443 } ct original packets 1-8 queue num 200 bypass
+    udp dport 443         ct original packets 1-6 queue num 200 bypass
   }
 }
 
@@ -312,11 +314,40 @@ unprivileged on Linux and covers the Windows backend by rendering.**
 6. **Version bumps are manual.** Moving off v72.13 means refreshing five
    checksums by hand.
 
+## 12a. QUIC (added 2026-09-11)
+
+A browser falling back to HTTP/3 on UDP 443 would bypass a TCP-only fix, so the
+daemon runs two profiles, shared by both backends via `dpi.daemon_args`:
+
+```
+--filter-tcp=80,443 --hostlist=<list> <tcp strategy>
+--new
+--filter-udp=443 --filter-l7=quic --hostlist=<list> --dpi-desync=tamper
+```
+
+`--filter-tcp` on the first profile is load-bearing: nfqws denies UDP to a
+profile that sets a TCP filter and no UDP filter, which keeps the two from
+contending for the same packets. Verified against the real binary, which
+reports *"we have 2 user defined desync profile(s)"* and fails only at the
+privilege drop.
+
+**Knock-back, not bypass.** Tampering the QUIC Initial makes its AEAD tag fail
+to authenticate, so the handshake cannot complete and the browser falls back to
+TCP. Chosen over a real QUIC bypass for two reasons: zapret puts a real bypass
+at 50-75% success (readme.en.md, "IP fragmentation"), and eve's probe speaks
+TCP only, so it could not verify one. Fallback is verified by the probe eve
+already has, because the browser is on TCP by then.
+
+Per-host, not global: zapret decrypts QUIC Initials to extract the SNI, so
+`--hostlist` applies over QUIC (readme.en.md line 664). Only managed hosts lose
+HTTP/3.
+
+Unverified: that browsers actually fall back within a useful time. The AEAD
+reasoning is sound, but the behaviour was not exercised against a real block.
+
 ## 13. Out of scope
 
 - Tunnels and VPNs. When the verdict is `ip-blocked` or `unreachable`, eve says
   so and stops; it will not set up a tunnel.
-- QUIC / UDP 443. The nft rule and the WinDivert filter cover TCP 80 and 443
-  only. A browser falling back to QUIC may bypass the fix; worth revisiting.
 - IPv6. `dns.py` queries A records only, as it does in evo-cli today.
 - Automatic `sync` on a schedule.

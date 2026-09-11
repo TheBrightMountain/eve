@@ -21,11 +21,13 @@ def nft_ruleset(qnum=DEFAULT_QNUM):
     # `bypass` is the safety valve: if nfqws dies, packets flow normally
     # instead of the network hanging on an empty queue.
     # `ct original packets 1-8` queues only the start of the connection - the
-    # ClientHello - rather than every packet of every download.
+    # ClientHello - rather than every packet of every download. QUIC gets 6,
+    # which is what zapret's own example uses to cover Initial retransmissions.
     return f"""table inet {TABLE} {{
   chain postrouting {{
     type filter hook postrouting priority mangle; policy accept;
     tcp dport {{ 80, 443 }} ct original packets 1-8 queue num {qnum} bypass
+    udp dport 443 ct original packets 1-6 queue num {qnum} bypass
   }}
 }}
 """
@@ -34,13 +36,14 @@ def nft_ruleset(qnum=DEFAULT_QNUM):
 def unit_text(strategy, qnum=DEFAULT_QNUM, hostlist=None, exe=None):
     hostlist = hostlist or paths.dpi_hostlist_path()
     exe = exe or binary()
+    args = " ".join(dpi.daemon_args(strategy, hostlist))
     return f"""[Unit]
 Description=eve route DPI bypass (zapret nfqws)
 After=network.target
 
 [Service]
 Type=simple
-ExecStart={exe} --qnum={qnum} --hostlist={hostlist} {strategy}
+ExecStart={exe} --qnum={qnum} {args}
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
 Restart=on-failure

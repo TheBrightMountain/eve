@@ -154,3 +154,84 @@ def test_a_known_good_strategy_is_tried_before_the_ladder():
     found = strategy.find("y.com", backend, ["y.com"], verify=lambda h: True, settle=0, preferred=known)
     assert found == known
     assert backend.applied == [known]
+
+
+# --- QUIC ------------------------------------------------------------------
+#
+# A browser that falls back to HTTP/3 on UDP 443 would route straight around a
+# TCP-only bypass. eve corrupts the QUIC Initial for hostlisted hosts so the
+# handshake cannot authenticate and the browser drops back to TCP, where the
+# bypass already works and is already verified.
+
+
+def test_linux_queues_quic_on_udp_443():
+    assert "udp dport 443" in dpi_linux.nft_ruleset(qnum=200)
+
+
+def test_quic_gets_six_packets_for_initial_retransmissions():
+    """zapret's own example uses 6 - TCP's 8 does not cover QUIC retransmits."""
+    ruleset = dpi_linux.nft_ruleset(qnum=200)
+    udp_line = next(line for line in ruleset.splitlines() if "udp dport" in line)
+    tcp_line = next(line for line in ruleset.splitlines() if "tcp dport" in line)
+    assert "ct original packets 1-6" in udp_line
+    assert "ct original packets 1-8" in tcp_line
+
+
+def test_tcp_and_udp_feed_the_same_queue():
+    ruleset = dpi_linux.nft_ruleset(qnum=317)
+    assert ruleset.count("queue num 317 bypass") == 2
+
+
+def test_daemon_args_split_into_two_profiles():
+    args = dpi.daemon_args("--dpi-desync=fake", "/etc/eve/route-dpi.txt")
+    assert args.count("--new") == 1
+
+
+def test_the_tcp_profile_is_pinned_to_tcp_so_it_cannot_swallow_udp():
+    """nfqws: "setting tcp and not setting udp filter denies udp"."""
+    args = dpi.daemon_args("--dpi-desync=fake", "/list")
+    tcp_profile = args[: args.index("--new")]
+    assert "--filter-tcp=80,443" in tcp_profile
+    assert "--dpi-desync=fake" in tcp_profile
+    assert not [a for a in tcp_profile if a.startswith("--filter-udp")]
+
+
+def test_the_quic_profile_targets_quic_and_tampers():
+    args = dpi.daemon_args("--dpi-desync=fake", "/list")
+    quic_profile = args[args.index("--new") + 1 :]
+    assert "--filter-udp=443" in quic_profile
+    assert "--filter-l7=quic" in quic_profile
+    assert dpi.QUIC_DESYNC in quic_profile
+
+
+def test_both_profiles_carry_the_hostlist_so_quic_stays_per_host():
+    """Other sites must keep HTTP/3 - only listed hosts get knocked back."""
+    args = dpi.daemon_args("--dpi-desync=fake", "/etc/eve/route-dpi.txt")
+    assert args.count("--hostlist=/etc/eve/route-dpi.txt") == 2
+
+
+def test_the_quic_mode_is_one_udp_can_actually_use():
+    """Only these eight modes apply to UDP - readme.en.md, "UDP support"."""
+    udp_applicable = {"fake", "fakeknown", "hopbyhop", "destopt", "ipfrag1", "ipfrag2", "udplen", "tamper"}
+    mode = dpi.QUIC_DESYNC.split("=", 1)[1]
+    assert set(mode.split(",")) <= udp_applicable
+
+
+def test_linux_unit_carries_both_profiles():
+    text = dpi_linux.unit_text("--dpi-desync=fake --dpi-desync-ttl=4", qnum=200)
+    exec_line = next(line for line in text.splitlines() if line.startswith("ExecStart="))
+    assert "--new" in exec_line
+    assert "--filter-l7=quic" in exec_line
+    assert "--qnum=200" in exec_line
+
+
+def test_windows_filters_udp_as_well_as_tcp():
+    line = dpi_windows.command_line("--dpi-desync=fake")
+    assert "--wf-tcp=80,443" in line
+    assert "--wf-udp=443" in line
+
+
+def test_windows_command_line_carries_both_profiles():
+    line = dpi_windows.command_line("--dpi-desync=fake")
+    assert "--new" in line
+    assert "--filter-l7=quic" in line

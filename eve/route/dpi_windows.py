@@ -12,7 +12,7 @@ from pathlib import Path
 from eve.route import dpi, paths
 
 SERVICE = "eve-route-dpi"
-WF_FILTER = "--wf-tcp=80,443"
+WF_FILTER = "--wf-tcp=80,443 --wf-udp=443"
 
 
 def binary():
@@ -22,7 +22,8 @@ def binary():
 def command_line(strategy, hostlist=None, exe=None):
     hostlist = hostlist or paths.dpi_hostlist_path()
     exe = exe or binary()
-    return f'"{exe}" {WF_FILTER} --hostlist={hostlist} {strategy}'
+    args = " ".join(dpi.daemon_args(strategy, hostlist))
+    return f'"{exe}" {WF_FILTER} {args}'
 
 
 def create_argv(strategy, hostlist=None, exe=None):

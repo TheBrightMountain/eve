@@ -66,6 +66,30 @@ keeps the first that gets a real TLS handshake through — then reuses it.
 Linux queues packets to nfqws with `queue num 200 bypass`; the `bypass` matters,
 because without it a dead daemon would hang the network instead of letting
 traffic flow. Windows needs no firewall rule at all — WinDivert filters
-in-process via `--wf-tcp`.
+in-process via `--wf-tcp` / `--wf-udp`.
 
 Both need administrator rights. `check` and `ls` never do.
+
+### QUIC
+
+A browser that falls back to HTTP/3 on UDP 443 would route straight around a
+TCP-only bypass, so the daemon runs two profiles:
+
+```
+--filter-tcp=80,443 --hostlist=<list> <strategy>     # bypass over TCP
+--new
+--filter-udp=443 --filter-l7=quic --hostlist=<list> --dpi-desync=tamper
+```
+
+The second corrupts the QUIC Initial for listed hosts. Its AEAD tag then fails
+to authenticate, the server cannot decrypt it, and the browser drops back to
+TCP — where the bypass already works and can actually be verified.
+
+zapret decrypts QUIC Initials to read the SNI, so `--hostlist` applies over
+QUIC too: **only the hosts eve manages lose HTTP/3.** Everything else is
+untouched.
+
+Why knock QUIC back rather than bypass it: zapret puts the success rate of a
+real QUIC bypass at [50–75%](https://github.com/bol-van/zapret), and eve has no
+way to verify one — its probe speaks TCP. A fix eve cannot verify is a fix it
+should not claim.
