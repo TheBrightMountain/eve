@@ -96,9 +96,17 @@ def _apply(book, backend, dry_run, action):
 @click.argument("hosts", nargs=-1, required=True)
 @TIMEOUT
 @click.option("-a", "--addresses", is_flag=True, help="Show every address and how each one answered.")
+@click.option(
+    "-n",
+    "--samples",
+    default=1,
+    show_default=True,
+    type=click.IntRange(min=1),
+    help="Probe this many times and summarise. Exposes an intermittent block.",
+)
 @click.option("--no-vn", is_flag=True, help="Skip the Vietnamese ISP resolvers.")
 @click.option("--json", "as_json", is_flag=True, help="Print the report as JSON.")
-def check(hosts, timeout, addresses, no_vn, as_json):
+def check(hosts, timeout, addresses, samples, no_vn, as_json):
     """Work out what stands between you and `HOSTS`. Changes nothing.
 
     Asks several resolvers what the name means, then opens a real TLS
@@ -107,12 +115,14 @@ def check(hosts, timeout, addresses, no_vn, as_json):
     name: if that one succeeds, the route is open and the block is keyed on the
     name. That is what separates **sni-blocked** from **ip-blocked**.
 
+    A single probe measures something that is not stable - a host can read
+    `open` and then `sni-blocked` a minute later. Pass `-n` to sample several
+    times; the worst verdict seen is the one reported, because an intermittent
+    block is still a block.
+
     Pure Python sockets - no privileges, same behaviour on Windows and Linux.
     """
-    reports = []
-    for host in hosts:
-        with console.status(f"[info]probing {host}...[/info]", spinner="dots"):
-            reports.append(probe.diagnose(host, timeout=timeout, include_vn=not no_vn))
+    reports = [_sample(host, timeout, not no_vn, samples) for host in hosts]
 
     if as_json:
         console.print_json(jsonlib.dumps(reports, ensure_ascii=False))
@@ -120,6 +130,29 @@ def check(hosts, timeout, addresses, no_vn, as_json):
     for rep in reports:
         render.report(rep, addresses=addresses)
     return reports
+
+
+def _sample(host, timeout, include_vn, samples):
+    """Probe `host` `samples` times and fold the runs into one report.
+
+    The report returned is the worst run seen, so the caller reads it exactly
+    like a single probe. Extra keys describe the spread, and are left off
+    entirely for a single sample so the output shape does not change.
+    """
+    runs = []
+    for attempt in range(samples):
+        label = f"probing {host}..." if samples == 1 else f"probing {host} ({attempt + 1}/{samples})..."
+        with console.status(f"[info]{label}[/info]", spinner="dots"):
+            runs.append(probe.diagnose(host, timeout=timeout, include_vn=include_vn))
+
+    if samples == 1:
+        return runs[0]
+
+    verdicts = [run["verdict"] for run in runs]
+    headline = probe.worst(verdicts)
+    report = next(run for run in runs if run["verdict"] == headline)
+    distribution = {v: verdicts.count(v) for v in dict.fromkeys(verdicts)}
+    return {**report, "samples": verdicts, "distribution": distribution}
 
 
 @click.command("add")

@@ -87,3 +87,27 @@ def test_verdict_unreachable_without_candidates():
 def test_verdict_unreachable_when_tcp_never_opens():
     rows = [_row("1.2.3.4", tcp=False)]
     assert probe.verdict(["1.2.3.4"], rows, [], _row("1.2.3.4", tcp=False), False) == probe.UNREACHABLE
+
+
+# --- sampling ----------------------------------------------------------------
+#
+# One probe is a single measurement of something that is not stable: a host can
+# read `open` and then `sni-blocked` a minute later. Ranking verdicts lets
+# repeated samples be summarised honestly instead of reporting a coin flip.
+
+
+def test_open_is_the_least_severe_verdict():
+    assert probe.severity(probe.OPEN) == 0
+
+
+def test_severity_increases_with_how_stuck_you_are():
+    order = [probe.OPEN, probe.DNS_POISONED, probe.SNI_BLOCKED, probe.IP_BLOCKED, probe.UNREACHABLE]
+    assert [probe.severity(v) for v in order] == sorted(probe.severity(v) for v in order)
+    assert len({probe.severity(v) for v in order}) == len(order)
+
+
+def test_the_worst_sample_is_the_one_that_matters():
+    """A host blocked one time in three is blocked - that is the actionable fact."""
+    assert probe.worst([probe.OPEN, probe.SNI_BLOCKED, probe.OPEN]) == probe.SNI_BLOCKED
+    assert probe.worst([probe.OPEN, probe.OPEN]) == probe.OPEN
+    assert probe.worst([probe.DNS_POISONED, probe.UNREACHABLE]) == probe.UNREACHABLE

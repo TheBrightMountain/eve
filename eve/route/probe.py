@@ -30,6 +30,26 @@ VERDICT_TEXT = {
 # Which verdicts mean "you can reach the host right now".
 REACHABLE = (OPEN, DNS_POISONED)
 
+# How stuck each verdict leaves you, worst last. One probe is a single
+# measurement of something that is not stable - a host can read `open` and then
+# `sni-blocked` a minute later - so repeated samples need an ordering to be
+# summarised honestly.
+SEVERITY = [OPEN, DNS_POISONED, SNI_BLOCKED, IP_BLOCKED, UNREACHABLE]
+
+
+def severity(verdict):
+    return SEVERITY.index(verdict)
+
+
+def worst(verdicts):
+    """The verdict that matters across samples.
+
+    A host blocked one time in three is blocked: an intermittent failure is
+    still the thing you need to fix, and calling it `open` because the majority
+    of probes got lucky would hide exactly the problem worth reporting.
+    """
+    return max(verdicts, key=severity)
+
 
 def _ms(start):
     return (time.perf_counter() - start) * 1000

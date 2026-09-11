@@ -322,3 +322,73 @@ def test_a_failure_while_installing_is_reported_too(monkeypatch, sandbox, stub_d
     result = CliRunner().invoke(cli, ["route", "add", "x.com"])
     assert result.exit_code == 1
     assert "sha256 mismatch" in result.output
+
+
+# --- check sampling ----------------------------------------------------------
+
+
+def _counting_diagnose(verdicts):
+    """Hand back a different verdict per call, so sampling is observable."""
+    seq = iter(verdicts)
+    calls = []
+
+    def diagnose(host, **kw):
+        calls.append(host)
+        verdict = next(seq, verdicts[-1])
+        return _report(host, verdict, best="1.2.3.4" if verdict == probe.OPEN else None)
+
+    diagnose.calls = calls
+    return diagnose
+
+
+def test_check_probes_once_by_default(monkeypatch, sandbox):
+    fake = _counting_diagnose([probe.OPEN])
+    monkeypatch.setattr(probe, "diagnose", fake)
+    CliRunner().invoke(cli, ["route", "check", "a.com"])
+    assert len(fake.calls) == 1
+
+
+def test_samples_repeat_the_probe(monkeypatch, sandbox):
+    fake = _counting_diagnose([probe.OPEN, probe.OPEN, probe.OPEN])
+    monkeypatch.setattr(probe, "diagnose", fake)
+    CliRunner().invoke(cli, ["route", "check", "a.com", "-n", "3"])
+    assert len(fake.calls) == 3
+
+
+def test_one_bad_sample_out_of_three_still_reports_blocked(monkeypatch, sandbox):
+    fake = _counting_diagnose([probe.OPEN, probe.SNI_BLOCKED, probe.OPEN])
+    monkeypatch.setattr(probe, "diagnose", fake)
+    output = CliRunner().invoke(cli, ["route", "check", "a.com", "-n", "3"]).output
+    assert "sni-blocked" in output
+
+
+def test_disagreement_is_called_out(monkeypatch, sandbox):
+    fake = _counting_diagnose([probe.OPEN, probe.SNI_BLOCKED, probe.OPEN])
+    monkeypatch.setattr(probe, "diagnose", fake)
+    output = CliRunner().invoke(cli, ["route", "check", "a.com", "-n", "3"]).output
+    assert "2/3" in output or "1/3" in output
+    assert "intermittent" in output.lower() or "unstable" in output.lower()
+
+
+def test_unanimous_samples_do_not_nag(monkeypatch, sandbox):
+    fake = _counting_diagnose([probe.SNI_BLOCKED] * 3)
+    monkeypatch.setattr(probe, "diagnose", fake)
+    output = CliRunner().invoke(cli, ["route", "check", "a.com", "-n", "3"]).output
+    assert "intermittent" not in output.lower()
+
+
+def test_json_carries_every_sample(monkeypatch, sandbox):
+    fake = _counting_diagnose([probe.OPEN, probe.SNI_BLOCKED, probe.OPEN])
+    monkeypatch.setattr(probe, "diagnose", fake)
+    out = CliRunner().invoke(cli, ["route", "check", "a.com", "-n", "3", "--json"]).output
+    payload = json.loads(out)[0]
+    assert payload["verdict"] == "sni-blocked"
+    assert payload["samples"] == ["open", "sni-blocked", "open"]
+    assert payload["distribution"]["open"] == 2
+
+
+def test_a_single_sample_keeps_the_old_json_shape(monkeypatch, sandbox):
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.OPEN, best="1.2.3.4"))
+    payload = json.loads(CliRunner().invoke(cli, ["route", "check", "a.com", "--json"]).output)[0]
+    assert payload["verdict"] == "open"
+    assert "samples" not in payload

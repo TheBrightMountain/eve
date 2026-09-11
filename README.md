@@ -118,6 +118,7 @@ open and the block is keyed on the name — which is what separates
 ```
 eve route check <host>...   diagnose only, changes nothing, needs no privilege
     -a / --addresses        show every address and how each one answered
+    -n / --samples N        probe N times; exposes an intermittent block
 eve route add <host>        diagnose → apply the fix that fits → verify → record
     --method pin|dpi        force a fix instead of following the diagnosis
 eve route rm <host> | --all undo and forget
@@ -147,7 +148,21 @@ outlives its reason looks exactly like a broken site.
 
 The checker is not infallible. An intermittent block, one lucky handshake, or a
 resolver that answers differently for a single query can all make a blocked host
-look fine. So `add` never refuses on a clean verdict — it warns and pins anyway:
+look fine. On a hijacked network the candidate list can collapse to a *single*
+address — every plain-UDP resolver poisoned, only DoH answering — and then one
+lucky or unlucky IP flips the verdict outright.
+
+`-n` measures that instead of hiding it:
+
+```
+$ eve route check store.steampowered.com -n 3
+store.steampowered.com  sni-blocked - DPI blocks the TLS handshake by server name
+  sampled 3x: open 2/3, sni-blocked 1/3
+! Intermittent - the samples disagreed. The worst one is reported, because a
+  host blocked some of the time is still blocked.
+```
+
+And `add` never refuses on a clean verdict — it warns and pins anyway:
 
 ```
 $ eve route add a.com

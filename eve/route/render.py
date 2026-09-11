@@ -54,6 +54,8 @@ def report(rep, addresses=False):
         f" - {probe.VERDICT_TEXT[verdict]}"
     )
 
+    _sampling(rep)
+
     if addresses:
         resolvers = _table("resolver", "answer")
         system = rep["system_ips"]
@@ -94,6 +96,27 @@ def report(rep, addresses=False):
         warning(f"DNS hands back a bogus address for {host}, but {rep['best']} works. {message}")
     else:
         error(f"{host}: {probe.VERDICT_TEXT[verdict]}. {message}")
+
+
+def _sampling(rep):
+    """Say how the samples fell, and flag it when they disagreed."""
+    distribution = rep.get("distribution")
+    if not distribution:
+        return
+
+    total = len(rep["samples"])
+    spread = ", ".join(
+        f"[{VERDICT_STYLE.get(v, 'info')}]{v}[/{VERDICT_STYLE.get(v, 'info')}] {n}/{total}"
+        for v, n in sorted(distribution.items(), key=lambda kv: -kv[1])
+    )
+    console.print(f"  sampled {total}x: {spread}")
+
+    if len(distribution) > 1:
+        console.print()
+        warning(
+            "Intermittent - the samples disagreed. The worst one is reported, because a host "
+            "blocked some of the time is still blocked."
+        )
 
 
 def ledger_table(book, dpi_state):
