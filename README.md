@@ -2,10 +2,65 @@
 
 A personal toolbox of commands worth keeping.
 
+## Install
+
+Needs [uv](https://docs.astral.sh/uv/getting-started/installation/). Nothing else —
+not even `make`.
+
+**On a fresh machine:**
+
 ```bash
-uv venv && uv pip install -e ".[test]"
-eve -h
+uv tool install git+https://github.com/TheBrightMountain/eve
 ```
+
+**From a clone**, which also wires up `sudo` (see below):
+
+```bash
+git clone git@github.com:TheBrightMountain/eve.git && cd eve
+./install.sh
+```
+
+Then `eve -h`.
+
+### Why the extra step for sudo
+
+uv installs tools into `~/.local/bin`, which is **not** on sudo's `secure_path`.
+Since `route add`, `rm` and `sync` all need root, a plain `uv tool install`
+leaves you with:
+
+```
+$ sudo eve route add medium.com
+sudo: eve: command not found
+```
+
+`./install.sh` fixes that by linking the binary into `/usr/local/bin`, which is
+on `secure_path`. It points at `~/.local/bin/eve` rather than the venv, so the
+link survives upgrades. If you'd rather not have a system-wide link, skip the
+script and use `sudo $(which eve)` instead.
+
+On Windows there is no such split — `uv tool install` is enough; run the
+privileged commands from an elevated PowerShell.
+
+### Removing it
+
+```bash
+sudo eve route rm --all    # undo what eve is holding open, FIRST
+./install.sh uninstall
+```
+
+The order matters: uninstalling first strands the hosts block, `/etc/eve`, and
+the `eve-route-dpi` service with nothing left to clean them up.
+
+### Working on it
+
+```bash
+./install.sh dev      # editable .venv
+./install.sh test     # pytest
+./install.sh lint     # ruff check + format --check
+```
+
+`make install` / `make test` also work if you have make — the Makefile just
+delegates to `install.sh`.
 
 ## `eve route`
 
