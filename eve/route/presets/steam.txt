@@ -1,0 +1,18 @@
+# Steam - store, community, login and game downloads, where the ISP filters them by server name
+#
+# HOST [PROBE]. A probe makes the entry use the DPI bypass and cover every
+# subdomain, tested through that one real host. Every entry here has one: the
+# CDNs rotate names and addresses, and a bypass keyed on the name keeps up
+# where a pinned address goes stale.
+
+steampowered.com     store.steampowered.com        # store, api, login, checkout, media
+steamcommunity.com   steamcommunity.com            # community, and the sign-in pages
+steamcontent.com     cache1-hkg1.steamcontent.com  # game downloads (cacheN-<region> hosts)
+steamstatic.com      cdn.akamai.steamstatic.com    # images, scripts, client config
+
+# Older Akamai names the client and store still reach for. Each probes itself:
+# akamaihd.net is shared with every other Akamai customer, so only these names.
+steamcdn-a.akamaihd.net        steamcdn-a.akamaihd.net
+steamstore-a.akamaihd.net      steamstore-a.akamaihd.net
+steamcommunity-a.akamaihd.net  steamcommunity-a.akamaihd.net
+steampipe.akamaized.net        steampipe.akamaized.net

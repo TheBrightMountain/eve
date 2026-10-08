@@ -1,4 +1,4 @@
-"""The five things you can do to a route."""
+"""The things you can do to a route."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import sys
 import rich_click as click
 
 from eve.console import console, error, info, step, success, warning
-from eve.route import dpi, ledger, paths, probe, reconcile, render, strategy
+from eve.route import dpi, ledger, paths, preset, probe, reconcile, render, strategy
 
 TIMEOUT = click.option("-t", "--timeout", default=6.0, show_default=True, help="Per-connection timeout (seconds).")
 DRY_RUN = click.option("-n", "--dry-run", is_flag=True, help="Say what would change, change nothing.")
@@ -22,6 +22,14 @@ FIXABLE = {probe.DNS_POISONED: "pin", probe.SNI_BLOCKED: "dpi"}
 # that answers differently for one query can all make a blocked host look fine
 # - so a clean verdict is a reason to warn, not a reason to refuse.
 WHEN_NOTHING_WRONG = "pin"
+
+
+class Refused(Exception):
+    """One host eve will not or cannot add. `add` stops on it; `import` moves on."""
+
+    def __init__(self, message, hint=None):
+        super().__init__(message)
+        self.hint = hint
 
 
 def _choose_method(rep, requested, whole_domain=False):
@@ -51,9 +59,10 @@ def _choose_method(rep, requested, whole_domain=False):
         warning(f"{rep['host']} looks reachable, but the check is not infallible - continuing anyway.")
         return WHEN_NOTHING_WRONG
 
-    error(f"{probe.VERDICT_TEXT[verdict]} - this needs a tunnel or VPN, which eve will not set up for you.")
-    info("If you know better, force one with `--method pin` or `--method dpi`.")
-    sys.exit(1)
+    raise Refused(
+        f"{probe.VERDICT_TEXT[verdict]} - this needs a tunnel or VPN, which eve will not set up for you.",
+        hint="If you know better, force one with `--method pin` or `--method dpi`.",
+    )
 
 
 def _require_admin(action):
@@ -206,20 +215,42 @@ def add(host, requested, probe_name, timeout, dry_run):
 
         eve route add steamcontent.com --probe cache1-hkg1.steamcontent.com
     """
-    if "*" in host:
-        error(f"{host}: wildcards are not needed - a DPI entry already covers every subdomain.")
-        info(
-            "Name the domain and a real host under it, e.g. "
-            "`eve route add steamcontent.com --probe cache1-hkg1.steamcontent.com`."
-        )
+    book = ledger.load()
+    backend = dpi.backend()
+    try:
+        rep = _admit(book, backend, host, requested, probe_name, timeout, dry_run)
+    except Refused as exc:
+        error(str(exc))
+        if exc.hint:
+            info(exc.hint)
         sys.exit(1)
+
+    if _apply(book, backend, dry_run, "Editing hosts"):
+        step("Verify")
+        _verify(host, probe_name, timeout)
+    return rep
+
+
+def _admit(book, backend, host, requested, probe_name, timeout, dry_run):
+    """Diagnose `host`, pick its fix and record it in `book` - but apply nothing.
+
+    The caller applies once afterwards, so `import` can admit a whole list and
+    reconcile the machine a single time. Raises `Refused` for a host that
+    cannot be added; `book` is left as it was in that case.
+    """
+    if "*" in host:
+        raise Refused(
+            f"{host}: wildcards are not needed - a DPI entry already covers every subdomain.",
+            hint="Name the domain and a real host under it, e.g. "
+            "`eve route add steamcontent.com --probe cache1-hkg1.steamcontent.com`.",
+        )
     if probe_name:
         if probe_name != host and not probe_name.endswith(f".{host}"):
-            error(f"--probe {probe_name} is not under {host}, so it cannot stand in for it.")
-            sys.exit(1)
+            raise Refused(f"--probe {probe_name} is not under {host}, so it cannot stand in for it.")
         if requested == "pin":
-            error("--probe covers a whole domain, which only the DPI bypass can do - a pin covers one exact name.")
-            sys.exit(1)
+            raise Refused(
+                "--probe covers a whole domain, which only the DPI bypass can do - a pin covers one exact name."
+            )
     target = probe_name or host
 
     step(f"eve route add {host}" + (f" (testing {target})" if probe_name else ""))
@@ -230,57 +261,119 @@ def add(host, requested, probe_name, timeout, dry_run):
     console.print(f"Diagnosis: [bold]{verdict}[/bold] - {probe.VERDICT_TEXT[verdict]}")
 
     method = _choose_method(rep, requested, whole_domain=bool(probe_name))
-    book = ledger.load()
-    backend = dpi.backend()
 
     if method == "pin":
         if not rep["best"]:
-            error(f"No working address for {host} to pin - nothing resolved or answered.")
-            sys.exit(1)
+            raise Refused(f"No working address for {host} to pin - nothing resolved or answered.")
         ledger.add_entry(book, host, method="pin", verdict=verdict, address=rep["best"])
-    else:
-        ok, reason = backend.available()
-        if not ok:
-            error(f"The DPI bypass is not available here: {reason}")
-            sys.exit(1)
-        if dry_run:
-            ledger.add_entry(book, host, method="dpi", verdict=verdict, strategy=strategy.LADDER[0], probe=probe_name)
-        else:
-            _require_admin("Installing the DPI bypass")
-            with _reporting():
-                backend.install()
-                hosts = sorted(set(ledger.by_method(book, "dpi")) | {host})
-                step("Finding a strategy that gets through")
-                found = strategy.find(
-                    target,
-                    backend,
-                    hosts,
-                    verify=lambda h: probe.reachable(h, timeout=timeout),
-                    preferred=reconcile.desired(book)["strategy"],
-                    on_try=lambda c: info(f"trying [accent]{c}[/accent]"),
-                )
-            if not found:
-                # The ledger is untouched, so reconciling against it puts back
-                # exactly what was running before - the hosts already being
-                # bypassed keep working, rather than losing the service too.
-                with _reporting(RECOVERY_HINT):
-                    reconcile.apply(book, backend)
-                error(f"No strategy in the ladder got through to {target}. Nothing else was changed.")
-                sys.exit(1)
-            success(f"Strategy that works: [accent]{found}[/accent]")
-            ledger.add_entry(book, host, method="dpi", verdict=verdict, strategy=found, probe=probe_name)
-
-    if not _apply(book, backend, dry_run, "Editing hosts"):
         return rep
 
-    step("Verify")
+    ok, reason = backend.available()
+    if not ok:
+        raise Refused(f"The DPI bypass is not available here: {reason}")
+    if dry_run:
+        ledger.add_entry(book, host, method="dpi", verdict=verdict, strategy=strategy.LADDER[0], probe=probe_name)
+        return rep
+
+    _require_admin("Installing the DPI bypass")
+    with _reporting():
+        backend.install()
+        hosts = sorted(set(ledger.by_method(book, "dpi")) | {host})
+        step("Finding a strategy that gets through")
+        found = strategy.find(
+            target,
+            backend,
+            hosts,
+            verify=lambda h: probe.reachable(h, timeout=timeout),
+            preferred=reconcile.desired(book)["strategy"],
+            on_try=lambda c: info(f"trying [accent]{c}[/accent]"),
+        )
+    if not found:
+        # The ledger is untouched, so reconciling against it puts back
+        # exactly what was running before - the hosts already being
+        # bypassed keep working, rather than losing the service too.
+        with _reporting(RECOVERY_HINT):
+            reconcile.apply(book, backend)
+        raise Refused(f"No strategy in the ladder got through to {target}. Nothing else was changed.")
+    success(f"Strategy that works: [accent]{found}[/accent]")
+    ledger.add_entry(book, host, method="dpi", verdict=verdict, strategy=found, probe=probe_name)
+    return rep
+
+
+def _verify(host, probe_name, timeout):
+    target = probe_name or host
     with console.status(f"[info]re-checking {target}...[/info]", spinner="dots"):
         ok = probe.reachable(target, timeout=timeout)
     if ok:
         success(f"{target} is reachable now" + (f" - and so is the rest of {host}" if probe_name else ""))
     else:
         warning(f"{target} still does not answer. Run `eve route check {target} -a` for detail.")
-    return rep
+    return ok
+
+
+@click.command("import")
+@click.argument("source", required=False)
+@click.option("-l", "--list", "list_presets", is_flag=True, help="Show the presets that ship with eve.")
+@TIMEOUT
+@DRY_RUN
+def import_(source, list_presets, timeout, dry_run):
+    """Add every route in a preset or a file, in one go.
+
+    `SOURCE` is the name of a preset that ships with eve (`eve route import
+    --list` shows them) or the path to a file of your own in the same format,
+    one entry per line:
+
+        steamcontent.com  cache1-hkg1.steamcontent.com
+        steamcdn-a.akamaihd.net
+
+    A second column is a probe, exactly like `add --probe`: the entry covers
+    the whole domain and that real host is what gets tested. `#` starts a
+    comment.
+
+    Each entry is diagnosed and fixed just as `add` would. One that cannot be
+    added is reported and skipped rather than stopping the rest, and hosts eve
+    already holds are left alone - `eve route sync` re-checks those.
+    """
+    if list_presets:
+        for name, summary in preset.available():
+            console.print(f"[accent]{name}[/accent]  {summary}")
+        return None
+    if not source:
+        error("Name a preset or a file - `eve route import --list` shows the presets.")
+        sys.exit(1)
+
+    try:
+        entries = preset.load(source)
+    except (ValueError, OSError) as exc:
+        error(str(exc))
+        sys.exit(1)
+    if not dry_run:
+        _require_admin("Importing routes")
+
+    book = ledger.load()
+    backend = dpi.backend()
+    added, failed = [], []
+    for host, probe_name in entries:
+        if host in book["entries"]:
+            info(f"{host} is already held - skipping. `eve route sync` re-checks it.")
+            continue
+        try:
+            _admit(book, backend, host, "auto", probe_name, timeout, dry_run)
+            added.append((host, probe_name))
+        except Refused as exc:
+            error(f"{host}: {exc}")
+            failed.append(host)
+
+    if added and _apply(book, backend, dry_run, "Importing routes"):
+        step("Verify")
+        for host, probe_name in added:
+            _verify(host, probe_name, timeout)
+
+    summary = f"{len(added)} added, {len(entries) - len(added) - len(failed)} already held, {len(failed)} failed"
+    (warning if failed else success)(f"Imported {source}: {summary}.")
+    if failed:
+        sys.exit(1)
+    return added
 
 
 @click.command("rm")

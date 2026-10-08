@@ -122,11 +122,14 @@ eve route check <host>...   diagnose only, changes nothing, needs no privilege
 eve route add <host>        diagnose → apply the fix that fits → verify → record
     --method pin|dpi        force a fix instead of following the diagnosis
     --probe <name>          cover a whole domain (dpi), testing this real subdomain
+eve route import <preset|file>
+                            add a whole list - one `HOST [PROBE]` per line
+    -l / --list             the presets that ship with eve (e.g. `steam`)
 eve route rm <host> | --all undo and forget
 eve route ls                every route eve is holding open
 eve route sync              re-check them all; re-pin whatever went stale
 
--n / --dry-run              on add, rm and sync: say what would change
+-n / --dry-run              on add, import, rm and sync: say what would change
 ```
 
 ### How the fixes work

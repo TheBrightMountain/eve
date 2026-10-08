@@ -29,6 +29,9 @@ fallback_version = "0.0.0+unknown"
 include = ["eve*"]
 exclude = ["tests*"]
 
+[tool.setuptools.package-data]
+"eve.route" = ["presets/*.txt"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py310"

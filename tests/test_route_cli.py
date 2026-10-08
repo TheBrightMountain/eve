@@ -8,7 +8,7 @@ from click.testing import CliRunner
 from eve.cli import cli
 from eve.route import ledger, paths, probe
 
-SUBCOMMANDS = ("check", "add", "rm", "ls", "sync")
+SUBCOMMANDS = ("check", "add", "import", "rm", "ls", "sync")
 
 
 @pytest.fixture

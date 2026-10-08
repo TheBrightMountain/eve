@@ -1,6 +1,6 @@
 import rich_click as click
 
-from eve.route.commands import add, check, ls, rm, sync
+from eve.route.commands import add, check, import_, ls, rm, sync
 
 HELP = """Find a way through to somewhere the network is keeping from you.
 
@@ -12,11 +12,12 @@ edit can touch it.
 
 - `check <host>` - what stands in the way, and which of the two it is
 - `add <host>` - apply the fix the diagnosis calls for, and remember it
+- `import <preset|file>` - add a whole list at once (`import --list` for presets)
 - `rm <host>` - undo it again
 - `ls` - every route eve is holding open
 - `sync` - re-check them all and repair whatever drifted
 
-`check` and `ls` are read-only and need no privileges. `add`, `rm` and `sync`
+`check` and `ls` are read-only and need no privileges. `add`, `import`, `rm` and `sync`
 edit hosts or manage a service, so they want administrator rights.
 """
 
@@ -26,5 +27,5 @@ def route_group():
     pass
 
 
-for command in (check, add, rm, ls, sync):
+for command in (check, add, import_, rm, ls, sync):
     route_group.add_command(command)
