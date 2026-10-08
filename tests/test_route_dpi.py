@@ -141,11 +141,13 @@ def test_the_ladder_stops_at_the_first_strategy_that_works():
     assert not backend.torn_down
 
 
-def test_a_ladder_that_never_works_tears_the_service_back_down():
+def test_a_ladder_that_never_works_leaves_teardown_to_the_caller():
+    # Other hosts may already be riding the service; the caller restores the
+    # previous state from the ledger instead of losing it.
     backend = FakeBackend()
     assert strategy.find("x.com", backend, ["x.com"], verify=lambda h: False, settle=0) is None
     assert backend.applied == list(strategy.LADDER)
-    assert backend.torn_down
+    assert not backend.torn_down
 
 
 def test_a_known_good_strategy_is_tried_before_the_ladder():

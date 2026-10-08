@@ -24,17 +24,25 @@ FIXABLE = {probe.DNS_POISONED: "pin", probe.SNI_BLOCKED: "dpi"}
 WHEN_NOTHING_WRONG = "pin"
 
 
-def _choose_method(rep, requested):
+def _choose_method(rep, requested, whole_domain=False):
     """Decide which fix to apply, or bail out if there is nothing sensible.
 
     An explicit `--method` always wins: it exists precisely for the times the
     diagnosis is wrong, so it must not be second-guessed here.
+
+    A whole-domain entry can only be dpi - a pin covers one exact name, so it
+    could never reach the subdomains the entry exists for.
     """
     verdict = rep["verdict"]
 
     if requested != "auto":
         warning(f"Forcing [accent]{requested}[/accent] - ignoring the diagnosis ({verdict}).")
         return requested
+
+    if whole_domain and verdict in (probe.OPEN, probe.DNS_POISONED, probe.SNI_BLOCKED):
+        if verdict != probe.SNI_BLOCKED:
+            warning(f"{rep['host']} looks {verdict}, but only the DPI bypass covers a whole domain - using it anyway.")
+        return "dpi"
 
     if verdict in FIXABLE:
         return FIXABLE[verdict]
@@ -170,9 +178,15 @@ def _sample(host, timeout, include_vn, samples):
     show_default=True,
     help="Which fix to apply. `auto` follows the diagnosis.",
 )
+@click.option(
+    "--probe",
+    "probe_name",
+    metavar="NAME",
+    help="Cover all of `HOST`'s subdomains, testing this real one in its place. DPI only.",
+)
 @TIMEOUT
 @DRY_RUN
-def add(host, requested, timeout, dry_run):
+def add(host, requested, probe_name, timeout, dry_run):
     """Make `HOST` reachable, and remember how.
 
     Diagnoses first, then applies the fix that diagnosis calls for: a poisoned
@@ -184,15 +198,38 @@ def add(host, requested, timeout, dry_run):
     intermittent block or one lucky handshake is enough - so a host that looks
     reachable is pinned anyway, with a warning. Use `--method` when you do not
     trust the diagnosis at all.
+
+    To cover a whole domain whose bare name is not a site - a CDN like
+    `steamcontent.com` with rotating `cacheN-...` hosts - pass `--probe` with
+    one real subdomain. The DPI entry then covers every subdomain, and that one
+    is what gets tested:
+
+        eve route add steamcontent.com --probe cache1-hkg1.steamcontent.com
     """
-    step(f"eve route add {host}")
-    with console.status(f"[info]diagnosing {host}...[/info]", spinner="dots"):
-        rep = probe.diagnose(host, timeout=timeout)
+    if "*" in host:
+        error(f"{host}: wildcards are not needed - a DPI entry already covers every subdomain.")
+        info(
+            "Name the domain and a real host under it, e.g. "
+            "`eve route add steamcontent.com --probe cache1-hkg1.steamcontent.com`."
+        )
+        sys.exit(1)
+    if probe_name:
+        if probe_name != host and not probe_name.endswith(f".{host}"):
+            error(f"--probe {probe_name} is not under {host}, so it cannot stand in for it.")
+            sys.exit(1)
+        if requested == "pin":
+            error("--probe covers a whole domain, which only the DPI bypass can do - a pin covers one exact name.")
+            sys.exit(1)
+    target = probe_name or host
+
+    step(f"eve route add {host}" + (f" (testing {target})" if probe_name else ""))
+    with console.status(f"[info]diagnosing {target}...[/info]", spinner="dots"):
+        rep = probe.diagnose(target, timeout=timeout)
 
     verdict = rep["verdict"]
     console.print(f"Diagnosis: [bold]{verdict}[/bold] - {probe.VERDICT_TEXT[verdict]}")
 
-    method = _choose_method(rep, requested)
+    method = _choose_method(rep, requested, whole_domain=bool(probe_name))
     book = ledger.load()
     backend = dpi.backend()
 
@@ -207,7 +244,7 @@ def add(host, requested, timeout, dry_run):
             error(f"The DPI bypass is not available here: {reason}")
             sys.exit(1)
         if dry_run:
-            ledger.add_entry(book, host, method="dpi", verdict=verdict, strategy=strategy.LADDER[0])
+            ledger.add_entry(book, host, method="dpi", verdict=verdict, strategy=strategy.LADDER[0], probe=probe_name)
         else:
             _require_admin("Installing the DPI bypass")
             with _reporting():
@@ -215,7 +252,7 @@ def add(host, requested, timeout, dry_run):
                 hosts = sorted(set(ledger.by_method(book, "dpi")) | {host})
                 step("Finding a strategy that gets through")
                 found = strategy.find(
-                    host,
+                    target,
                     backend,
                     hosts,
                     verify=lambda h: probe.reachable(h, timeout=timeout),
@@ -223,21 +260,26 @@ def add(host, requested, timeout, dry_run):
                     on_try=lambda c: info(f"trying [accent]{c}[/accent]"),
                 )
             if not found:
-                error("No strategy in the ladder got through. The bypass has been removed again.")
+                # The ledger is untouched, so reconciling against it puts back
+                # exactly what was running before - the hosts already being
+                # bypassed keep working, rather than losing the service too.
+                with _reporting(RECOVERY_HINT):
+                    reconcile.apply(book, backend)
+                error(f"No strategy in the ladder got through to {target}. Nothing else was changed.")
                 sys.exit(1)
             success(f"Strategy that works: [accent]{found}[/accent]")
-            ledger.add_entry(book, host, method="dpi", verdict=verdict, strategy=found)
+            ledger.add_entry(book, host, method="dpi", verdict=verdict, strategy=found, probe=probe_name)
 
     if not _apply(book, backend, dry_run, "Editing hosts"):
         return rep
 
     step("Verify")
-    with console.status(f"[info]re-checking {host}...[/info]", spinner="dots"):
-        ok = probe.reachable(host, timeout=timeout)
+    with console.status(f"[info]re-checking {target}...[/info]", spinner="dots"):
+        ok = probe.reachable(target, timeout=timeout)
     if ok:
-        success(f"{host} is reachable now")
+        success(f"{target} is reachable now" + (f" - and so is the rest of {host}" if probe_name else ""))
     else:
-        warning(f"{host} still does not answer. Run `eve route check {host} -a` for detail.")
+        warning(f"{target} still does not answer. Run `eve route check {target} -a` for detail.")
     return rep
 
 
@@ -308,8 +350,9 @@ def sync(timeout, dry_run):
 
     step("eve route sync")
     for host, entry in list(book["entries"].items()):
-        with console.status(f"[info]re-checking {host}...[/info]", spinner="dots"):
-            rep = probe.diagnose(host, timeout=timeout)
+        target = ledger.probe_host(host, entry)
+        with console.status(f"[info]re-checking {target}...[/info]", spinner="dots"):
+            rep = probe.diagnose(target, timeout=timeout)
         if entry["method"] == "pin" and rep["best"] and rep["best"] != entry.get("address"):
             info(f"{host}: [accent]{entry.get('address')}[/accent] → [accent]{rep['best']}[/accent]")
             ledger.add_entry(book, host, method="pin", verdict=rep["verdict"], address=rep["best"])

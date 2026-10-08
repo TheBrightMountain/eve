@@ -237,6 +237,72 @@ def test_method_dpi_overrides_a_reachable_verdict(monkeypatch, sandbox, stub_dpi
     assert entry["strategy"] == "--dpi-desync=fake"
 
 
+def test_probe_covers_a_whole_domain_by_testing_a_real_subdomain(monkeypatch, sandbox, stub_dpi):
+    diagnosed, tried = [], []
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: diagnosed.append(h) or _report(h, probe.SNI_BLOCKED))
+    monkeypatch.setattr(probe, "reachable", lambda h, **kw: True)
+    monkeypatch.setattr("eve.route.strategy.find", lambda host, *a, **kw: tried.append(host) or "--dpi-desync=fake")
+    result = CliRunner().invoke(cli, ["route", "add", "cdn.com", "--probe", "cache1.cdn.com"])
+    assert result.exit_code == 0, result.output
+    assert diagnosed == tried == ["cache1.cdn.com"]
+    entry = ledger.load(sandbox / "route.json")["entries"]["cdn.com"]
+    assert entry["method"] == "dpi"
+    assert entry["probe"] == "cache1.cdn.com"
+    assert stub_dpi.hosts == ["cdn.com"]
+
+
+def test_probe_uses_dpi_even_when_the_subdomain_looks_open(monkeypatch, sandbox, stub_dpi):
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.OPEN, best="1.2.3.4"))
+    monkeypatch.setattr(probe, "reachable", lambda h, **kw: True)
+    monkeypatch.setattr("eve.route.strategy.find", lambda *a, **kw: "--dpi-desync=fake")
+    result = CliRunner().invoke(cli, ["route", "add", "cdn.com", "--probe", "a.cdn.com"])
+    assert result.exit_code == 0, result.output
+    assert ledger.load(sandbox / "route.json")["entries"]["cdn.com"]["method"] == "dpi"
+
+
+def test_probe_must_sit_under_the_domain(sandbox):
+    result = CliRunner().invoke(cli, ["route", "add", "cdn.com", "--probe", "elsewhere.org"])
+    assert result.exit_code == 1
+    assert "not under" in result.output
+
+
+def test_probe_refuses_a_pin(sandbox):
+    result = CliRunner().invoke(cli, ["route", "add", "cdn.com", "--probe", "a.cdn.com", "--method", "pin"])
+    assert result.exit_code == 1
+
+
+def test_a_wildcard_is_refused_with_the_right_spelling(sandbox):
+    result = CliRunner().invoke(cli, ["route", "add", "*.cdn.com"])
+    assert result.exit_code == 1
+    assert "--probe" in result.output
+
+
+def test_a_failed_ladder_keeps_the_hosts_already_bypassed(monkeypatch, sandbox, stub_dpi):
+    book = ledger.blank()
+    ledger.add_entry(book, "old.com", method="dpi", verdict="sni-blocked", strategy="--dpi-desync=fake")
+    ledger.save(book, sandbox / "route.json")
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.SNI_BLOCKED))
+    monkeypatch.setattr("eve.route.strategy.find", lambda *a, **kw: None)
+    result = CliRunner().invoke(cli, ["route", "add", "new.com"])
+    assert result.exit_code == 1
+    assert stub_dpi.hosts == ["old.com"]
+    assert stub_dpi.strategy == "--dpi-desync=fake"
+    assert list(ledger.load(sandbox / "route.json")["entries"]) == ["old.com"]
+
+
+def test_sync_rechecks_a_domain_entry_through_its_probe(monkeypatch, sandbox):
+    book = ledger.blank()
+    ledger.add_entry(
+        book, "cdn.com", method="dpi", verdict="sni-blocked", strategy="--dpi-desync=fake", probe="a.cdn.com"
+    )
+    ledger.save(book, sandbox / "route.json")
+    seen = []
+    monkeypatch.setattr(probe, "diagnose", lambda h, **kw: seen.append(h) or _report(h, probe.OPEN, best="1.2.3.4"))
+    monkeypatch.setattr("eve.route.dpi.backend", lambda name=None: StubBackend())
+    CliRunner().invoke(cli, ["route", "sync"])
+    assert seen == ["a.cdn.com"]
+
+
 def test_ip_blocked_still_refuses_by_default(monkeypatch, sandbox):
     monkeypatch.setattr(probe, "diagnose", lambda h, **kw: _report(h, probe.IP_BLOCKED))
     result = CliRunner().invoke(cli, ["route", "add", "a.com"])

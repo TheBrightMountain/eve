@@ -52,18 +52,29 @@ def _now():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def add_entry(book, host, method, verdict, address=None, strategy=None):
+def add_entry(book, host, method, verdict, address=None, strategy=None, probe=None):
     entry = {"method": method, "verdict": verdict, "verified": _now()}
     if address:
         entry["address"] = address
     if strategy:
         entry["strategy"] = strategy
+    if probe:
+        entry["probe"] = probe
     entry.setdefault("added", book["entries"].get(host, {}).get("added", entry["verified"]))
     # Re-seat the host at the end so insertion order tracks recency of update,
     # not first sighting. Timestamps are second-granular and tie; order does not.
     book["entries"].pop(host, None)
     book["entries"][host] = entry
     return entry
+
+
+def probe_host(host, entry):
+    """The name to actually test for an entry.
+
+    A domain-wide DPI entry (`steamcontent.com`) is often not a site of its
+    own, so it carries a real subdomain to test in its place.
+    """
+    return entry.get("probe") or host
 
 
 def remove_entry(book, host):

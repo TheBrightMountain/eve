@@ -121,6 +121,7 @@ eve route check <host>...   diagnose only, changes nothing, needs no privilege
     -n / --samples N        probe N times; exposes an intermittent block
 eve route add <host>        diagnose → apply the fix that fits → verify → record
     --method pin|dpi        force a fix instead of following the diagnosis
+    --probe <name>          cover a whole domain (dpi), testing this real subdomain
 eve route rm <host> | --all undo and forget
 eve route ls                every route eve is holding open
 eve route sync              re-check them all; re-pin whatever went stale

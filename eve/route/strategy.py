@@ -32,8 +32,9 @@ def candidates(preferred=None):
 def find(host, backend, hosts, verify, preferred=None, settle=SETTLE_SECONDS, on_try=None):
     """Apply each candidate until `verify(host)` says the handshake got through.
 
-    Returns the winning strategy, or None after tearing the service back down -
-    a failed search must not leave a half-configured bypass behind.
+    Returns the winning strategy, or None. A failed search does not tear the
+    service down: other hosts may already depend on it. The caller restores
+    the previous state from the ledger instead.
     """
     backend.write_hostlist(hosts)
     for candidate in candidates(preferred):
@@ -44,5 +45,4 @@ def find(host, backend, hosts, verify, preferred=None, settle=SETTLE_SECONDS, on
             time.sleep(settle)
         if verify(host):
             return candidate
-    backend.teardown()
     return None
