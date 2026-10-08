@@ -1,6 +1,7 @@
 import rich_click as click
 
 from eve import __version__
+from eve.dns import dns_group
 from eve.route import route_group
 
 click.rich_click.TEXT_MARKUP = "markdown"
@@ -24,6 +25,7 @@ def cli():
 
 
 cli.add_command(route_group)
+cli.add_command(dns_group)
 
 
 def main():

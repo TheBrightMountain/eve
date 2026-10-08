@@ -242,3 +242,33 @@ Why knock QUIC back rather than bypass it: zapret puts the success rate of a
 real QUIC bypass at [50–75%](https://github.com/bol-van/zapret), and eve has no
 way to verify one — its probe speaks TCP. A fix eve cannot verify is a fix it
 should not claim.
+
+## `eve dns`
+
+Choose which DNS servers the machine asks.
+
+```
+eve dns show                  each connected interface's servers, and who set them
+eve dns set <server>...       switch to these, in order of preference
+    -i / --interface NAME     only this interface (repeatable)
+    -f / --force              set them even if none answers a test lookup
+eve dns reset                 put back exactly what was there before eve changed it
+
+-n / --dry-run                on set and reset: say what would change
+```
+
+`set` asks each server to resolve a test name first. A dead one is warned
+about; if none answers, nothing changes — a typo here takes every lookup on the
+machine down with it.
+
+The first `set` on an interface records what it had (`%ProgramData%\eve\dns.json`,
+`/etc/eve/dns.json`), and later ones never overwrite that, so `reset` always
+returns to the real original: servers typed in by hand come back exactly, and
+automatic ones are handed back to whatever set them.
+
+| | |
+|---|---|
+| Windows | DnsClient PowerShell module; persistent |
+| Linux | `resolvectl` (systemd-resolved); lasts until the link or NetworkManager restarts |
+
+New DNS fixes a poisoned answer, not a DPI block — that needs `eve route`.
