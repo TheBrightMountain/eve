@@ -272,3 +272,60 @@ automatic ones are handed back to whatever set them.
 | Linux | `resolvectl` (systemd-resolved); lasts until the link or NetworkManager restarts |
 
 New DNS fixes a poisoned answer, not a DPI block — that needs `eve route`.
+
+## `eve aws`
+
+Run the AWS chores of an ECS project without retyping the commands. Pick an
+account and a project once, then act on it. Every step prints the real `aws` /
+`docker` command it runs (`-q` hides them, `-n` shows what would change without
+changing anything).
+
+```
+eve aws creds ls                         accounts (AWS CLI profiles), which is current, signed in or not
+eve aws creds add <name> --region R      save a new account and sign in (aws login)
+eve aws creds login <name>               make it current; signs in only if the session expired
+eve aws creds logout [<name>]  |  rm <name>
+
+eve aws project ls
+eve aws project add <name> --path P --type ecs|moodle --account A
+eve aws project enter <name>             make it current, switching to its account
+eve aws project leave  |  rm <name>  |  types
+
+eve aws status                           services, database, ALB targets, site HTTP code
+eve aws park | unpark                    services → 0 + stop the DB  /  start the DB → services back
+eve aws logs <svc> [--since 10m] [-f] [-g PATTERN]
+eve aws exec <svc> [-t TASK] [-c CONTAINER] [-u USER] [-- CMD]
+eve aws run [<recipe>] [-s SVC]          named commands from the project type and ids.txt
+eve aws push [--tag T] [--allow-dirty]   tag local images with the git commit, push to ECR
+eve aws files [<prefix>]                 list the project's files bucket
+```
+
+Any action takes `-P <project>` to target a project without entering it, and
+`EVE_AWS_PROJECT` overrides the current project for one shell.
+
+**Accounts** are ordinary AWS CLI profiles in `~/.aws/config`, signed in with
+`aws login`; eve stores no credentials. **Projects** live in
+`~/.config/eve/aws.json` (name, path, type, account) and read their details from
+`<path>/aws/ids.txt`:
+
+```
+ACCOUNT_ID=261732724428                 # actions that change things refuse on another account
+CLUSTER=moodle
+SERVICES=moodle-web moodle-cron         # short names: web, cron
+DEFAULT_SERVICE=web
+DB_ID=moodle-db                         # optional
+TG_ARN=arn:aws:elasticloadbalancing:... # optional, for status
+SITE_URL=https://mdl.example.com        # optional, for status/unpark
+LOG_GROUP=/ecs/moodle
+REGISTRY=261732724428.dkr.ecr.ap-southeast-2.amazonaws.com
+REPOS=moodle-php moodle-nginx           # pushed from <repo>:local
+FILES_BUCKET=moodle-files-261732724428
+CONTAINER_web=php                       # optional; the moodle type defaults to php
+RECIPE_hello=echo hi                    # optional custom recipes
+RECIPE_hello_SERVICE=cron
+```
+
+The `moodle` type adds recipes `purge`, `upgrade`, `cron` and `reset-password`
+(run as `www-data`). When a service runs several tasks or a task has several
+containers, eve uses the flag, then the configured default, then the only one -
+and otherwise asks.
