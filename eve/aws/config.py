@@ -1,4 +1,4 @@
-"""A project's details, read from `<project>/aws/ids.txt`.
+"""A project's details, read from `<project>/ids.txt` (or `<project>/aws/ids.txt`).
 
 The file is the human record of a project's IDs, so eve only reads the keys it
 needs and ignores the rest. One `KEY=VALUE` per line; `#` comments and blank
@@ -11,11 +11,17 @@ from pathlib import Path
 
 from eve.aws.runner import AwsError
 
-IDS_RELPATH = Path("aws") / "ids.txt"
+# Looked for in this order: the project root first, then the older aws/ subfolder.
+IDS_CANDIDATES = (Path("ids.txt"), Path("aws") / "ids.txt")
 
 
 def ids_file(project_path):
-    return Path(project_path).expanduser() / IDS_RELPATH
+    """The project's ids.txt - the first candidate that exists, else the root one (for messages)."""
+    root = Path(project_path).expanduser()
+    for rel in IDS_CANDIDATES:
+        if (root / rel).exists():
+            return root / rel
+    return root / IDS_CANDIDATES[0]
 
 
 def parse(text):

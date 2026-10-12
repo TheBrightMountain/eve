@@ -308,7 +308,7 @@ Any action takes `-P <project>` to target a project without entering it, and
 **Accounts** are ordinary AWS CLI profiles in `~/.aws/config`, signed in with
 `aws login`; eve stores no credentials. **Projects** live in
 `~/.config/eve/aws.json` (name, path, type, account) and read their details from
-`<path>/aws/ids.txt`:
+`<path>/ids.txt` (or `<path>/aws/ids.txt`):
 
 ```
 ACCOUNT_ID=261732724428                 # actions that change things refuse on another account

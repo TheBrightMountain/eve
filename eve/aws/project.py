@@ -29,7 +29,7 @@ def project_group():
     - `types` - the project types and what each adds
 
     A project's details (cluster, services, bucket...) are read from
-    `<path>/aws/ids.txt`.
+    `<path>/ids.txt` (or `<path>/aws/ids.txt`).
     """
 
 
@@ -60,7 +60,9 @@ def add(ctx, name, path, kind, account):
     with reporting():
         folder = Path(path).expanduser().resolve()
         if not ids_file(folder).exists():
-            raise AwsError(f"{ids_file(folder)} not found.", "A project needs an aws/ids.txt with its IDs.")
+            raise AwsError(
+                f"{ids_file(folder)} not found.", "A project needs an ids.txt (in its folder, or in aws/) with its IDs."
+            )
         if account not in profiles(ctx):
             warning(f"No account {account!r} yet - add it with `eve aws account add {account} --region <region>`.")
         state = statefile.load()
@@ -133,7 +135,7 @@ def types_():
 @project_group.command("edit")
 @click.argument("name")
 @click.option("--name", "new_name", help="Rename the project.")
-@click.option("--path", "path", type=click.Path(file_okay=False), help="Move it to another folder (needs aws/ids.txt).")
+@click.option("--path", "path", type=click.Path(file_okay=False), help="Move it to another folder (needs ids.txt).")
 @click.option("--type", "kind", type=click.Choice(projtypes.names()), help="Change its type.")
 @click.option("--account", help="Tie it to another account.")
 @click.pass_context
@@ -155,7 +157,10 @@ def edit(ctx, name, new_name, path, kind, account):
         if path:
             folder = Path(path).expanduser().resolve()
             if not ids_file(folder).exists():
-                raise AwsError(f"{ids_file(folder)} not found.", "A project needs an aws/ids.txt with its IDs.")
+                raise AwsError(
+                    f"{ids_file(folder)} not found.",
+                    "A project needs an ids.txt (in its folder, or in aws/) with its IDs.",
+                )
             changes.append(f"path {entry['path']} → {folder}")
             entry["path"] = str(folder)
         if kind:

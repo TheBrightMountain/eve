@@ -220,6 +220,21 @@ def test_project_edit_refuses_taken_name_and_no_changes(env):
     assert "Nothing to change" in invoke("project", "edit", "moodle").output
 
 
+def test_ids_txt_in_the_project_root_wins(env):
+    (env["proj"] / "ids.txt").write_text("CLUSTER=from-root\nSERVICES=a-web\n")
+    project = Project.load("moodle", statefile.load()["projects"]["moodle"])
+    assert project.get("CLUSTER") == "from-root"
+    assert project.ids_path == env["proj"] / "ids.txt"
+
+
+def test_project_add_accepts_ids_txt_in_the_root(env):
+    root_only = env["tmp"] / "root-only"
+    root_only.mkdir()
+    (root_only / "ids.txt").write_text("CLUSTER=x\nSERVICES=x-web\n")
+    result = invoke("project", "add", "rooted", "--path", str(root_only), "--account", "lab")
+    assert result.exit_code == 0, result.output
+
+
 def test_project_add_needs_ids_txt(env):
     empty = env["tmp"] / "empty"
     empty.mkdir()

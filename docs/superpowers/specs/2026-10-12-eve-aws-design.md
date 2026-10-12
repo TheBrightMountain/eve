@@ -20,7 +20,7 @@ than hiding it.
 |---|---|---|
 | Shape | Two managed nouns (`account`, `project`), one *current* selection of each, then actions on the current project | Mirrors how the user thinks: pick account + project once, then act |
 | Accounts | Stored as standard AWS CLI profiles in `~/.aws/config`; signed in with `aws login --remote --profile <name>` | No credentials ever stored by eve; plain `aws --profile x` keeps working |
-| Projects | Registered by name with a path, a **type** and an account; details read from the project's `aws/ids.txt` | The repo stays the source of truth; works for non-Moodle projects |
+| Projects | Registered by name with a path, a **type** and an account; details read from the project's `ids.txt` (root, or `aws/ids.txt`) | The repo stays the source of truth; works for non-Moodle projects |
 | Project types | `ecs` (generic) and `moodle` (ecs + built-in recipes/defaults) | Moodle knowledge lives in a type, not in the core commands |
 | Selecting a project | `eve aws project enter <name>` / `leave` | User's choice of noun |
 | How AWS is called | Shell out to `aws` and `docker` | Reuses the login session and credential precedence exactly; no `boto3` |
@@ -98,7 +98,7 @@ and checks each with `aws sts get-caller-identity --profile <name>`.
 
 eve passes `--profile <name>` to every `aws` call it makes.
 
-### Project details: `<path>/aws/ids.txt`
+### Project details: `<path>/ids.txt` (falls back to `<path>/aws/ids.txt`)
 
 One `KEY=VALUE` per line, `#` comments and blank lines ignored, value = everything
 after the first `=`. Unknown keys ignored (the file doubles as the human record).
