@@ -24,6 +24,7 @@ def project_group():
     - `add <name> --path P --type T --account A` - remember a project
     - `enter <name>` - make it current (and switch to its account)
     - `leave` - clear the current project
+    - `edit <name> --name NEW --path P --type T --account A` - change any of those
     - `rm <name>` - forget it (touches nothing in AWS or on disk)
     - `types` - the project types and what each adds
 
@@ -127,3 +128,54 @@ def types_():
         console.print(f"[accent]{name}[/accent] - {kind['description']}")
         for rname, recipe in kind["recipes"].items():
             console.print(f"    run {rname:<15} {recipe.get('help', '')}")
+
+
+@project_group.command("edit")
+@click.argument("name")
+@click.option("--name", "new_name", help="Rename the project.")
+@click.option("--path", "path", type=click.Path(file_okay=False), help="Move it to another folder (needs aws/ids.txt).")
+@click.option("--type", "kind", type=click.Choice(projtypes.names()), help="Change its type.")
+@click.option("--account", help="Tie it to another account.")
+@click.pass_context
+def edit(ctx, name, new_name, path, kind, account):
+    """Change project `NAME`: rename it, or change its path, type or account.
+
+    Only eve's record changes - nothing in AWS or on disk is touched.
+    """
+    with reporting():
+        if not any((new_name, path, kind, account)):
+            raise AwsError("Nothing to change.", "Pass --name, --path, --type and/or --account.")
+        state = statefile.load()
+        if name not in state["projects"]:
+            raise AwsError(f"Unknown project {name!r}.", "eve aws project ls")
+        if new_name and new_name != name and new_name in state["projects"]:
+            raise AwsError(f"A project called {new_name!r} already exists.")
+        entry = dict(state["projects"][name])
+        changes = []
+        if path:
+            folder = Path(path).expanduser().resolve()
+            if not ids_file(folder).exists():
+                raise AwsError(f"{ids_file(folder)} not found.", "A project needs an aws/ids.txt with its IDs.")
+            changes.append(f"path {entry['path']} → {folder}")
+            entry["path"] = str(folder)
+        if kind:
+            changes.append(f"type {entry['type']} → {kind}")
+            entry["type"] = kind
+        if account:
+            if account not in profiles(ctx):
+                warning(f"No account {account!r} yet - add it with `eve aws account add {account} --region <region>`.")
+            changes.append(f"account {entry.get('account')} → {account}")
+            entry["account"] = account
+        target = new_name or name
+        if target != name:
+            changes.insert(0, f"name {name} → {target}")
+            del state["projects"][name]
+        state["projects"][target] = entry
+        if state.get("current_project") == name:
+            state["current_project"] = target
+            if account:
+                state["current_account"] = account
+        statefile.save(state)
+        success(f"Project {target} updated")
+        for change in changes:
+            info(change)

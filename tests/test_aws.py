@@ -154,6 +154,7 @@ def test_pick_order(monkeypatch):
         ["account", "edit"],
         ["project"],
         ["project", "add"],
+        ["project", "edit"],
         ["project", "enter"],
         ["project", "leave"],
         ["project", "types"],
@@ -188,6 +189,35 @@ def test_project_add_enter_leave_rm(env):
     assert statefile.load()["current_project"] is None
     invoke("project", "rm", "shop")
     assert "shop" not in statefile.load()["projects"]
+
+
+def test_project_edit_renames_and_keeps_it_current(env):
+    result = invoke("project", "edit", "moodle", "--name", "lms", "--type", "ecs", "--account", "work")
+    assert result.exit_code == 0, result.output
+    st = statefile.load()
+    assert "moodle" not in st["projects"]
+    assert st["projects"]["lms"]["type"] == "ecs" and st["projects"]["lms"]["account"] == "work"
+    assert st["current_project"] == "lms" and st["current_account"] == "work"
+
+
+def test_project_edit_path_needs_ids_txt(env):
+    empty = env["tmp"] / "elsewhere"
+    empty.mkdir()
+    result = invoke("project", "edit", "moodle", "--path", str(empty))
+    assert result.exit_code == 1 and "ids.txt" in result.output
+    moved = env["tmp"] / "moved"
+    (moved / "aws").mkdir(parents=True)
+    (moved / "aws" / "ids.txt").write_text("CLUSTER=x\n")
+    assert invoke("project", "edit", "moodle", "--path", str(moved)).exit_code == 0
+    assert statefile.load()["projects"]["moodle"]["path"] == str(moved.resolve())
+
+
+def test_project_edit_refuses_taken_name_and_no_changes(env):
+    st = statefile.load()
+    statefile.add_project(st, "shop", env["proj"], "ecs", "lab")
+    statefile.save(st)
+    assert "already exists" in invoke("project", "edit", "moodle", "--name", "shop").output
+    assert "Nothing to change" in invoke("project", "edit", "moodle").output
 
 
 def test_project_add_needs_ids_txt(env):

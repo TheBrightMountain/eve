@@ -289,6 +289,7 @@ eve aws account logout [<name>]  |  rm <name>     (`acc` works as a short alias)
 
 eve aws project ls
 eve aws project add <name> --path P --type ecs|moodle --account A
+eve aws project edit <name> [--name NEW] [--path P] [--type T] [--account A]
 eve aws project enter <name>             make it current, switching to its account
 eve aws project leave  |  rm <name>  |  types
 

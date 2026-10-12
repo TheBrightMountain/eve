@@ -52,6 +52,7 @@ eve aws account logout [<name>]            sign out (default: current)
 ── projects ────────────────────────────────────────────────────────────────
 eve aws project ls                       name, type, account, path, * = current
 eve aws project add <name> --path P --type ecs|moodle --account A
+eve aws project edit <name> [--name NEW] [--path P] [--type T] [--account A]   change eve's record only
 eve aws project rm <name>                forget it (touches nothing in AWS or on disk)
 eve aws project enter <name>             make it current (and switch to its account)
 eve aws project leave                    clear the current project
