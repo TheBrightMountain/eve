@@ -46,11 +46,21 @@ def empty():
     return {"current_account": None, "current_project": None}
 
 
-def load():
+def _read_state():
     path = state_path()
-    data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+def migrate_if_needed():
+    """Run once before anything reads projects."""
+    data = _read_state()
     if data.get("projects"):
         _migrate_legacy(data)
+
+
+def load():
+    migrate_if_needed()
+    data = _read_state()
     return {**empty(), **{k: v for k, v in data.items() if k in ("current_account", "current_project")}}
 
 
@@ -75,11 +85,13 @@ def _migrate_legacy(data):
 
 
 def project_names():
+    migrate_if_needed()
     folder = projects_dir()
     return sorted(p.stem for p in folder.glob("*.json")) if folder.exists() else []
 
 
 def load_project(name):
+    migrate_if_needed()
     path = project_path(name)
     if not path.exists():
         raise AwsError(f"Unknown project {name!r}.", "eve aws project ls")

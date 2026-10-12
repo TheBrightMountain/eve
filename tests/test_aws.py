@@ -152,6 +152,20 @@ def test_legacy_projects_in_aws_json_are_migrated(tmp_path, monkeypatch):
     assert "projects" not in json.loads(statefile.state_path().read_text())
 
 
+def test_migration_also_happens_on_project_ls(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    proj = tmp_path / "old"
+    (proj / "aws").mkdir(parents=True)
+    (proj / "aws" / "ids.txt").write_text("CLUSTER=old\n")
+    statefile.state_path().parent.mkdir(parents=True)
+    statefile.state_path().write_text(
+        json.dumps({"projects": {"old": {"path": str(proj), "type": "ecs", "account": "lab"}}})
+    )
+    monkeypatch.setattr(runner, "_which", lambda tool: f"/usr/bin/{tool}")
+    result = invoke("project", "ls")
+    assert result.exit_code == 0 and "old" in result.output
+
+
 def test_type_recipes_merge_with_project_recipes(env):
     recipes = types.recipes_for(load())
     assert {"purge", "upgrade", "cron", "reset-password", "hello"} <= set(recipes)
