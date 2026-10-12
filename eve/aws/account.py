@@ -191,7 +191,7 @@ def rm(ctx, name, force):
     """Forget account `NAME`: sign out and remove its profile from ~/.aws/config."""
     with reporting():
         state = statefile.load()
-        users = statefile.projects_using(state, name)
+        users = statefile.projects_using(name)
         if users and not force:
             raise AwsError(f"Projects still use {name}: {', '.join(users)}.", "Remove them first, or pass --force.")
         r = runner(ctx, name)
@@ -244,9 +244,11 @@ def edit(ctx, name, new_name, region, yes):
             return
         repointed = rename_profile_section(config_path(), name, new_name)
         state = statefile.load()
-        moved = statefile.projects_using(state, name)
+        moved = statefile.projects_using(name)
         for project in moved:
-            state["projects"][project]["account"] = new_name
+            data = statefile.load_project(project)
+            data["account"] = new_name
+            statefile.save_project(data)
         if state.get("current_account") == name:
             state["current_account"] = new_name
         statefile.save(state)

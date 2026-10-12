@@ -45,15 +45,12 @@ def current_project_name(state, given=None):
     name = given or os.environ.get("EVE_AWS_PROJECT") or state.get("current_project")
     if not name:
         raise AwsError("No project selected.", "eve aws project enter <name>   (or pass -P <name>)")
-    if name not in state["projects"]:
-        raise AwsError(f"Unknown project {name!r}.", "eve aws project ls")
     return name
 
 
 def project_and_runner(ctx, given=None):
     state = statefile.load()
-    name = current_project_name(state, given)
-    project = Project.load(name, state["projects"][name])
+    project = Project(statefile.load_project(current_project_name(state, given)))
     profile = project.account or state.get("current_account")
     return project, runner(ctx, profile)
 
@@ -72,14 +69,15 @@ def identity(runner_):
 
 def safety_check(project, runner_):
     """Refuse to change anything when signed in to the wrong account."""
-    expected = project.get("ACCOUNT_ID")
+    expected = project.get("account_id")
     who = identity(runner_)
     if who is None:
         raise AwsError(
             f"Not signed in to account {runner_.profile!r}.", f"eve aws account login {runner_.profile or '<name>'}"
         )
     if not expected:
-        warning(f"ACCOUNT_ID is not set in {project.ids_path} - skipping the wrong-account check.")
+        warning(f"account_id is not set for {project.name} - skipping the wrong-account check.")
+        info(f"eve aws project set {project.name} account_id {who['Account']}")
         return who
     if who["Account"] != expected:
         raise AwsError(

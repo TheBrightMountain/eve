@@ -187,3 +187,24 @@ records argv and returns canned JSON. No test calls real AWS.
 - actions: exact argv per command, `--profile` always injected, dry-run skips mutating calls,
   unpark stopping→stopped→available and its refusal path, push dirty-tree refusal,
   safety-check refusal, picker resolution order, error mapping.
+
+
+## 8. Revision 2026-10-12 (after first use)
+
+- **Projects moved out of repos.** Each project is now
+  `~/.config/eve/aws/projects/<name>.json` (structured JSON: lists for
+  `services`/`repos`, dicts for `containers`/`recipes`/`resources`); `aws.json`
+  only keeps the current account and project. Reason: the user didn't want AWS
+  IDs committed to the project repo, and wanted something shareable.
+- New project commands: `show`, `keys`, `set`/`unset` (dotted keys such as
+  `containers.web`), `export`/`import` (export drops the machine-specific
+  `path`), `edit` with no options opens the JSON in `$EDITOR` and undoes the
+  edit if it isn't valid JSON.
+- Old `ids.txt` files: imported by `project add --from FILE` or picked up from
+  `--path`; projects stored by the first version (inside `aws.json`) are
+  migrated automatically on first load.
+- `project enter` signs in to the project's account when its session is missing
+  or expired (`--no-login` to skip), and refuses when the account doesn't exist.
+- `path` is optional; only `push` needs it (unless `--tag` is given).
+- The `creds` group was renamed `account` (alias `acc`), with `edit` to rename
+  a profile (repointing `source_profile` references and projects) or change its region.

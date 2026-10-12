@@ -4,13 +4,14 @@ A fake replaces subprocess, so nothing here talks to AWS or Docker.
 """
 
 import json
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
 from eve.aws import actions, pick, runner, types
 from eve.aws import state as statefile
-from eve.aws.config import Project, parse, short_name
+from eve.aws.config import Project, from_ids_values, parse_ids, set_value, short_name, unset_value
 from eve.aws.runner import AwsError, Result
 from eve.cli import cli
 
@@ -59,8 +60,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.delenv("EVE_AWS_PROJECT", raising=False)
     monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
     proj = tmp_path / "moodle-aws"
-    (proj / "aws").mkdir(parents=True)
-    (proj / "aws" / "ids.txt").write_text(IDS, encoding="utf-8")
+    proj.mkdir()
 
     fake = FakeExec()
     fake.on(
@@ -72,8 +72,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(actions, "sleep", lambda s: None)
     monkeypatch.setattr(actions, "http_status", lambda url: 303)
 
+    statefile.save_project(from_ids_values("moodle", "moodle", "lab", proj, parse_ids(IDS)))
     st = statefile.empty()
-    statefile.add_project(st, "moodle", proj, "moodle", "lab")
     st["current_project"] = "moodle"
     st["current_account"] = "lab"
     statefile.save(st)
@@ -84,16 +84,29 @@ def invoke(*args, input=None):
     return CliRunner().invoke(cli, ["aws", *args], input=input)
 
 
+def load(name="moodle"):
+    return Project(statefile.load_project(name))
+
+
 # -- config / state / types / pick ---------------------------------------------------------------
 
 
-def test_parse_skips_comments_and_keeps_equals_in_values():
-    values = parse("# c\n\nA=1\nB = two words \nC=x=y\nnot a pair\n")
+def test_parse_ids_skips_comments_and_keeps_equals_in_values():
+    values = parse_ids("# c\n\nA=1\nB = two words \nC=x=y\nnot a pair\n")
     assert values == {"A": "1", "B": "two words", "C": "x=y"}
 
 
+def test_ids_txt_converts_to_structured_json(env):
+    data = statefile.load_project("moodle")
+    assert data["services"] == ["moodle-web", "moodle-cron"]
+    assert data["repos"] == ["moodle-php", "moodle-nginx"]
+    assert data["account_id"] == ACCOUNT and data["cluster"] == "moodle"
+    assert data["recipes"]["hello"] == {"cmd": "echo hi=there", "service": "cron"}
+    assert data["path"] == str(env["proj"])
+
+
 def test_service_short_names_and_resolution(env):
-    project = Project.load("moodle", statefile.load()["projects"]["moodle"])
+    project = load()
     assert short_name("moodle-web") == "web"
     assert project.resolve_service("cron") == "moodle-cron"
     assert project.resolve_service("moodle-web") == "moodle-web"
@@ -101,22 +114,46 @@ def test_service_short_names_and_resolution(env):
         project.resolve_service("api")
 
 
-def test_missing_key_names_the_key_and_file(env):
-    project = Project.load("moodle", statefile.load()["projects"]["moodle"])
+def test_missing_key_points_at_project_set(env):
     with pytest.raises(AwsError) as exc:
-        project.require("NOPE")
-    assert "NOPE" in str(exc.value) and "ids.txt" in exc.value.hint
+        load().require("files_bucket_nope")
+    assert "files_bucket_nope" in str(exc.value) and "project set moodle" in exc.value.hint
 
 
-def test_state_remove_clears_current(env):
+def test_set_and_unset_values():
+    data = {"name": "x", "type": "ecs", "account": "lab"}
+    set_value(data, "services", ["a-web", "a-cron"])
+    set_value(data, "containers.web", ["php"])
+    set_value(data, "recipes.hi.cmd", ["echo", "hi"])
+    set_value(data, "cluster", ["c"])
+    assert data["services"] == ["a-web", "a-cron"] and data["containers"] == {"web": "php"}
+    assert data["recipes"] == {"hi": {"cmd": "echo hi"}} and data["cluster"] == "c"
+    unset_value(data, "containers.web")
+    assert data["containers"] == {}
+    for bad in (("account", ["x"]), ("nope", ["x"]), ("containers", ["x"])):
+        with pytest.raises(AwsError):
+            set_value(data, *bad)
+
+
+def test_legacy_projects_in_aws_json_are_migrated(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    proj = tmp_path / "old"
+    (proj / "aws").mkdir(parents=True)
+    (proj / "aws" / "ids.txt").write_text(f"ACCOUNT_ID={ACCOUNT}\nCLUSTER=old\nSERVICES=old-web\nVPC=vpc-1\n")
+    statefile.state_path().parent.mkdir(parents=True)
+    statefile.state_path().write_text(json.dumps({
+        "current_account": "lab", "current_project": "old",
+        "projects": {"old": {"path": str(proj), "type": "ecs", "account": "lab"}},
+    }))  # fmt: skip
     st = statefile.load()
-    statefile.remove_project(st, "moodle")
-    assert st["current_project"] is None and "moodle" not in st["projects"]
+    assert st == {"current_account": "lab", "current_project": "old"}
+    data = statefile.load_project("old")
+    assert data["cluster"] == "old" and data["services"] == ["old-web"] and data["resources"] == {"vpc": "vpc-1"}
+    assert "projects" not in json.loads(statefile.state_path().read_text())
 
 
-def test_type_recipes_merge_with_ids_recipes(env):
-    project = Project.load("moodle", statefile.load()["projects"]["moodle"])
-    recipes = types.recipes_for(project)
+def test_type_recipes_merge_with_project_recipes(env):
+    recipes = types.recipes_for(load())
     assert {"purge", "upgrade", "cron", "reset-password", "hello"} <= set(recipes)
     assert recipes["purge"]["user"] == "www-data"
     assert recipes["hello"] == {**recipes["hello"], "cmd": "echo hi=there", "service": "cron", "user": None}
@@ -155,6 +192,12 @@ def test_pick_order(monkeypatch):
         ["project"],
         ["project", "add"],
         ["project", "edit"],
+        ["project", "show"],
+        ["project", "set"],
+        ["project", "unset"],
+        ["project", "keys"],
+        ["project", "export"],
+        ["project", "import"],
         ["project", "enter"],
         ["project", "leave"],
         ["project", "types"],
@@ -176,70 +219,103 @@ def test_help_runs(path):
 # -- project ----------------------------------------------------------------------------------------
 
 
-def test_project_add_enter_leave_rm(env):
-    other = env["tmp"] / "shop"
-    (other / "aws").mkdir(parents=True)
-    (other / "aws" / "ids.txt").write_text(f"ACCOUNT_ID={ACCOUNT}\nCLUSTER=shop\nSERVICES=shop-web\n")
-    assert invoke("project", "add", "shop", "--path", str(other), "--type", "ecs", "--account", "lab").exit_code == 0
+def test_project_add_set_enter_leave_rm(env):
+    assert invoke("project", "add", "shop", "--type", "ecs", "--account", "lab").exit_code == 0
+    assert invoke("project", "set", "shop", "account_id", ACCOUNT).exit_code == 0
+    assert invoke("project", "set", "shop", "cluster", "shop").exit_code == 0
+    assert invoke("project", "set", "shop", "services", "shop-web", "shop-worker").exit_code == 0
+    assert statefile.load_project("shop")["services"] == ["shop-web", "shop-worker"]
     result = invoke("project", "enter", "shop")
     assert result.exit_code == 0, result.output
     assert statefile.load()["current_project"] == "shop"
     assert "shop" in invoke("project", "ls").output
+    assert '"cluster": "shop"' in invoke("project", "show").output
     invoke("project", "leave")
     assert statefile.load()["current_project"] is None
     invoke("project", "rm", "shop")
-    assert "shop" not in statefile.load()["projects"]
+    assert "shop" not in statefile.project_names()
+
+
+def test_project_add_imports_an_old_ids_txt_from_path(env):
+    old = env["tmp"] / "old"
+    old.mkdir()
+    (old / "ids.txt").write_text("CLUSTER=x\nSERVICES=x-web\n")
+    result = invoke("project", "add", "old", "--path", str(old), "--account", "lab")
+    assert result.exit_code == 0, result.output
+    assert statefile.load_project("old")["cluster"] == "x"
+
+
+def test_project_export_import_round_trip(env):
+    out = env["tmp"] / "shared.json"
+    assert invoke("project", "export", "moodle", "-o", str(out)).exit_code == 0
+    shared = json.loads(out.read_text())
+    assert "path" not in shared and shared["cluster"] == "moodle"
+    result = invoke("project", "import", str(out), "--name", "copy", "--account", "work")
+    assert result.exit_code == 0, result.output
+    copy = statefile.load_project("copy")
+    assert copy["account"] == "work" and copy["services"] == ["moodle-web", "moodle-cron"]
+    assert "already exists" in invoke("project", "import", str(out)).output
 
 
 def test_project_edit_renames_and_keeps_it_current(env):
     result = invoke("project", "edit", "moodle", "--name", "lms", "--type", "ecs", "--account", "work")
     assert result.exit_code == 0, result.output
+    assert "moodle" not in statefile.project_names()
+    lms = statefile.load_project("lms")
+    assert lms["type"] == "ecs" and lms["account"] == "work" and lms["cluster"] == "moodle"
     st = statefile.load()
-    assert "moodle" not in st["projects"]
-    assert st["projects"]["lms"]["type"] == "ecs" and st["projects"]["lms"]["account"] == "work"
     assert st["current_project"] == "lms" and st["current_account"] == "work"
 
 
-def test_project_edit_path_needs_ids_txt(env):
-    empty = env["tmp"] / "elsewhere"
-    empty.mkdir()
-    result = invoke("project", "edit", "moodle", "--path", str(empty))
-    assert result.exit_code == 1 and "ids.txt" in result.output
-    moved = env["tmp"] / "moved"
-    (moved / "aws").mkdir(parents=True)
-    (moved / "aws" / "ids.txt").write_text("CLUSTER=x\n")
-    assert invoke("project", "edit", "moodle", "--path", str(moved)).exit_code == 0
-    assert statefile.load()["projects"]["moodle"]["path"] == str(moved.resolve())
+def test_project_edit_without_options_opens_the_editor(env, monkeypatch):
+    def fake_edit(filename):
+        path = Path(filename)
+        data = json.loads(path.read_text())
+        data["cluster"] = "edited"
+        path.write_text(json.dumps(data))
 
-
-def test_project_edit_refuses_taken_name_and_no_changes(env):
-    st = statefile.load()
-    statefile.add_project(st, "shop", env["proj"], "ecs", "lab")
-    statefile.save(st)
-    assert "already exists" in invoke("project", "edit", "moodle", "--name", "shop").output
-    assert "Nothing to change" in invoke("project", "edit", "moodle").output
-
-
-def test_ids_txt_in_the_project_root_wins(env):
-    (env["proj"] / "ids.txt").write_text("CLUSTER=from-root\nSERVICES=a-web\n")
-    project = Project.load("moodle", statefile.load()["projects"]["moodle"])
-    assert project.get("CLUSTER") == "from-root"
-    assert project.ids_path == env["proj"] / "ids.txt"
-
-
-def test_project_add_accepts_ids_txt_in_the_root(env):
-    root_only = env["tmp"] / "root-only"
-    root_only.mkdir()
-    (root_only / "ids.txt").write_text("CLUSTER=x\nSERVICES=x-web\n")
-    result = invoke("project", "add", "rooted", "--path", str(root_only), "--account", "lab")
+    monkeypatch.setattr("eve.aws.project.click.edit", fake_edit)
+    result = invoke("project", "edit", "moodle")
     assert result.exit_code == 0, result.output
+    assert statefile.load_project("moodle")["cluster"] == "edited"
 
 
-def test_project_add_needs_ids_txt(env):
-    empty = env["tmp"] / "empty"
-    empty.mkdir()
-    result = invoke("project", "add", "x", "--path", str(empty), "--account", "lab")
-    assert result.exit_code == 1 and "ids.txt" in result.output
+def test_project_edit_undoes_broken_json(env, monkeypatch):
+    monkeypatch.setattr("eve.aws.project.click.edit", lambda filename: Path(filename).write_text("{ nope"))
+    result = invoke("project", "edit", "moodle")
+    assert result.exit_code == 1 and "undone" in result.output
+    assert statefile.load_project("moodle")["cluster"] == "moodle"
+
+
+def test_project_edit_refuses_taken_name(env):
+    invoke("project", "add", "shop", "--account", "lab")
+    assert "already exists" in invoke("project", "edit", "moodle", "--name", "shop").output
+
+
+def test_enter_signs_in_when_the_session_expired(env):
+    env["fake"].on("sts", "get-caller-identity", rc=255, err="Your session has expired. Please reauthenticate")
+    result = invoke("project", "enter", "moodle", "--remote")
+    assert result.exit_code == 0, result.output
+    assert ["aws", "login", "--profile", "lab", "--remote"] in env["fake"].ran("login")
+
+
+def test_enter_no_login_skips_signing_in(env):
+    env["fake"].on("sts", "get-caller-identity", rc=255, err="Your session has expired. Please reauthenticate")
+    result = invoke("project", "enter", "moodle", "--no-login")
+    assert result.exit_code == 0
+    assert not [c for c in env["fake"].ran("login") if c[1] == "login"]
+    assert "not signed in" in result.output
+
+
+def test_enter_does_not_sign_in_when_already_signed_in(env):
+    invoke("project", "enter", "moodle")
+    assert not [c for c in env["fake"].ran("login") if c[1] == "login"]
+
+
+def test_enter_refuses_a_missing_account(env):
+    invoke("project", "edit", "moodle", "--account", "ghost")
+    result = invoke("project", "enter", "moodle")
+    assert result.exit_code == 1 and "ghost" in result.output
 
 
 def test_actions_need_a_project(env):
@@ -318,7 +394,7 @@ def test_account_edit_renames_profile_refs_and_projects(env, monkeypatch):
         "[profile helper]\nrole_arn = r\nsource_profile = example\n"
     )
     st = statefile.load()
-    assert st["projects"]["moodle"]["account"] == "example"
+    assert statefile.load_project("moodle")["account"] == "example"
     assert st["current_account"] == "example"
 
 

@@ -1,8 +1,8 @@
 """Project types: what eve knows about a kind of app beyond plain ECS.
 
 `ecs` is the generic type. A type can set a default container, a user that
-built-in recipes run as, and built-in recipes. ids.txt can add recipes or
-override built-in ones by name.
+built-in recipes run as, and built-in recipes. A project's own `recipes` can add
+recipes or override built-in ones by name.
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ def get(kind):
 
 
 def recipes_for(project):
-    """Built-in recipes for the project's type, overlaid with ids.txt recipes."""
+    """Built-in recipes for the project's type, overlaid with the project's own recipes."""
     kind = get(project.kind)
     merged = {}
     for name, recipe in kind["recipes"].items():

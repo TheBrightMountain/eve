@@ -45,7 +45,7 @@ def http_status(url):
 
 
 def _db_status(project, r):
-    db = project.get("DB_ID")
+    db = project.get("db_id")
     if not db:
         return None
     return r.aws_text(
@@ -54,7 +54,7 @@ def _db_status(project, r):
 
 
 def _set_desired(project, r, count):
-    cluster = project.require("CLUSTER")
+    cluster = project.require("cluster")
     for service in project.services:
         r.aws(
             "ecs", "update-service", "--cluster", cluster, "--service", service,
@@ -64,7 +64,7 @@ def _set_desired(project, r, count):
 
 
 def _site_check(project):
-    url = project.get("SITE_URL")
+    url = project.get("site_url")
     if url:
         code = http_status(url)
         good = isinstance(code, int) and code < 500
@@ -72,7 +72,7 @@ def _site_check(project):
 
 
 def _pick_service(project, given):
-    default = project.get("DEFAULT_SERVICE")
+    default = project.get("default_service")
     return pick.choose(
         project.services,
         "service",
@@ -84,7 +84,7 @@ def _pick_service(project, given):
 
 
 def _pick_task(project, r, service, given):
-    cluster = project.require("CLUSTER")
+    cluster = project.require("cluster")
     arns = r.aws_json(
         "ecs", "list-tasks", "--cluster", cluster, "--service-name", service, "--desired-status", "RUNNING",
         "--query", "taskArns",
@@ -105,11 +105,11 @@ def _pick_task(project, r, service, given):
 
 
 def _pick_container(project, r, service, task, given):
-    default = project.get(f"CONTAINER_{short_name(service)}") or projtypes.get(project.kind)["container"]
+    default = project.container_for(service) or projtypes.get(project.kind)["container"]
     if given or default:
         return given or default
     names = r.aws_json(
-        "ecs", "describe-tasks", "--cluster", project.require("CLUSTER"), "--tasks", task,
+        "ecs", "describe-tasks", "--cluster", project.require("cluster"), "--tasks", task,
         "--query", "tasks[0].containers[].name",
     )  # fmt: skip
     return pick.choose(names or [], "container")
@@ -124,7 +124,7 @@ def _exec(project, r, service, task_given, container_given, command, user):
     r._need("session-manager-plugin")
     r.interactive(
         r.aws_argv([
-            "ecs", "execute-command", "--cluster", project.require("CLUSTER"), "--task", task,
+            "ecs", "execute-command", "--cluster", project.require("cluster"), "--task", task,
             "--container", container, "--interactive", "--command", command,
         ]),
         mutating=True,
@@ -143,7 +143,7 @@ def status(ctx, project_name):
         project, r = project_and_runner(ctx, project_name)
         header(project, r)
         data = r.aws_json(
-            "ecs", "describe-services", "--cluster", project.require("CLUSTER"), "--services", *project.services
+            "ecs", "describe-services", "--cluster", project.require("cluster"), "--services", *project.services
         )
         table = Table(box=None, pad_edge=False)
         for col in ("SERVICE", "REV", "RUNNING", "ROLLOUT"):
@@ -159,8 +159,8 @@ def status(ctx, project_name):
         console.print(table)
         db = _db_status(project, r)
         if db is not None:
-            (success if db == "available" else info)(f"database {project.get('DB_ID')}: {db}")
-        tg = project.get("TG_ARN")
+            (success if db == "available" else info)(f"database {project.get('db_id')}: {db}")
+        tg = project.get("target_group_arn")
         if tg:
             targets = r.aws_json(
                 "elbv2", "describe-target-health", "--target-group-arn", tg,
@@ -189,9 +189,9 @@ def park(ctx, project_name):
         _set_desired(project, r, 0)
         db = _db_status(project, r)
         if db is not None:
-            step(f"Database {project.get('DB_ID')}")
+            step(f"Database {project.get('db_id')}")
             if db == "available":
-                r.aws("rds", "stop-db-instance", "--db-instance-identifier", project.get("DB_ID"),
+                r.aws("rds", "stop-db-instance", "--db-instance-identifier", project.get("db_id"),
                       "--query", "DBInstance.DBInstanceStatus", mutating=True)  # fmt: skip
                 warning("AWS starts a stopped database again by itself after 7 days.")
             else:
@@ -215,7 +215,7 @@ def unpark(ctx, project_name, desired):
         safety_check(project, r)
         db = _db_status(project, r)
         if db is not None:
-            name = project.get("DB_ID")
+            name = project.get("db_id")
             step(f"Database {name}")
             while db == "stopping" and not r.dry_run:
                 info(f"still stopping - checking again in {POLL_SECONDS}s")
@@ -250,7 +250,7 @@ def logs(ctx, service, project_name, since, follow, pattern):
     with reporting():
         project, r = project_and_runner(ctx, project_name)
         svc = _pick_service(project, service)
-        args = ["logs", "tail", project.require("LOG_GROUP"), "--since", since,
+        args = ["logs", "tail", project.require("log_group"), "--since", since,
                 "--log-stream-name-prefix", short_name(svc)]  # fmt: skip
         if follow:
             args.append("--follow")
@@ -297,7 +297,7 @@ def run(ctx, recipe, project_name, service, task):
         recipes = projtypes.recipes_for(project)
         if not recipe:
             if not recipes:
-                info(f"No recipes. Add `RECIPE_<name>=<command>` to {project.ids_path}.")
+                info(f"No recipes. Add one: eve aws project set {project.name} recipes.<name>.cmd <command>")
                 return
             table = Table(box=None, pad_edge=False)
             for col in ("RECIPE", "FROM", "RUNS"):
@@ -327,19 +327,25 @@ def push(ctx, project_name, tag, allow_dirty):
         project, r = project_and_runner(ctx, project_name)
         header(project, r)
         safety_check(project, r)
-        repo = str(project.path)
-        dirty = r.run(["git", "-C", repo, "status", "--porcelain"]).stdout.strip()
-        if dirty and not allow_dirty and not tag:
-            raise AwsError("Uncommitted changes - the tag wouldn't match the code.", "Commit first, or --allow-dirty.")
-        tag = tag or r.run(["git", "-C", repo, "rev-parse", "--short", "HEAD"]).stdout.strip()
-        registry = project.require("REGISTRY")
-        local = project.get("LOCAL_IMAGE_TAG", "local")
+        if not tag:
+            if project.path is None:
+                raise AwsError("push needs the project's folder for the git commit tag.",
+                               f"eve aws project edit {project.name} --path <folder>   (or pass --tag)")  # fmt: skip
+            repo = str(project.path)
+            dirty = r.run(["git", "-C", repo, "status", "--porcelain"]).stdout.strip()
+            if dirty and not allow_dirty:
+                raise AwsError(
+                    "Uncommitted changes - the tag wouldn't match the code.", "Commit first, or --allow-dirty."
+                )
+            tag = r.run(["git", "-C", repo, "rev-parse", "--short", "HEAD"]).stdout.strip()
+        registry = project.require("registry")
+        local = project.get("local_image_tag", "local")
         step(f"Push tag {tag}")
         r.pipe(
             r.aws_argv(["ecr", "get-login-password"]),
             ["docker", "login", "--username", "AWS", "--password-stdin", registry],
         )
-        for name in project.words("REPOS"):
+        for name in project.list_of("repos"):
             target = f"{registry}/{name}:{tag}"
             r.run(["docker", "tag", f"{name}:{local}", target], mutating=True)
             r.run(["docker", "push", target], mutating=True, capture=False)
@@ -354,7 +360,7 @@ def files(ctx, prefix, project_name):
     """List objects in the project's files bucket (optionally under `PREFIX`, e.g. ecs/)."""
     with reporting():
         project, r = project_and_runner(ctx, project_name)
-        bucket = project.require("FILES_BUCKET")
+        bucket = project.require("files_bucket")
         r.interactive(
             r.aws_argv(["s3", "ls", f"s3://{bucket}/{prefix}", "--recursive", "--human-readable", "--summarize"])
         )

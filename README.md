@@ -281,23 +281,25 @@ account and a project once, then act on it. Every step prints the real `aws` /
 changing anything).
 
 ```
-eve aws account ls                         accounts (AWS CLI profiles), which is current, signed in or not
-eve aws account add <name> --region R      save a new account and sign in (aws login)
-eve aws account login <name>               make it current; signs in only if the session expired
-eve aws account edit <name> [--name NEW] [--region R]   rename / change region
-eve aws account logout [<name>]  |  rm <name>     (`acc` works as a short alias)
+eve aws account ls                       accounts (AWS CLI profiles), which is current, signed in or not
+eve aws account add <name> --region R    save a new account and sign in (aws login)
+eve aws account login <name>             make it current; signs in only if the session expired
+eve aws account edit <name> [--name NEW] [--region R]
+eve aws account logout [<name>]  |  rm <name>          (`acc` works as a short alias)
 
-eve aws project ls
-eve aws project add <name> --path P --type ecs|moodle --account A
-eve aws project edit <name> [--name NEW] [--path P] [--type T] [--account A]
-eve aws project enter <name>             make it current, switching to its account
+eve aws project ls  |  show [<name>]  |  keys
+eve aws project add <name> --type ecs|moodle --account A [--path P] [--from FILE]
+eve aws project set <name> <key> <value...>  |  unset <name> <key>
+eve aws project edit <name> [--name N] [--path P] [--type T] [--account A]   (no options: open in $EDITOR)
+eve aws project enter <name>             make it current, switch to its account, sign in if needed
 eve aws project leave  |  rm <name>  |  types
+eve aws project export <name> [-o FILE]  |  import <file> [--name N] [--account A] [--path P]
 
 eve aws status                           services, database, ALB targets, site HTTP code
 eve aws park | unpark                    services → 0 + stop the DB  /  start the DB → services back
 eve aws logs <svc> [--since 10m] [-f] [-g PATTERN]
 eve aws exec <svc> [-t TASK] [-c CONTAINER] [-u USER] [-- CMD]
-eve aws run [<recipe>] [-s SVC]          named commands from the project type and ids.txt
+eve aws run [<recipe>] [-s SVC]          named commands from the project type and the project
 eve aws push [--tag T] [--allow-dirty]   tag local images with the git commit, push to ECR
 eve aws files [<prefix>]                 list the project's files bucket
 ```
@@ -306,26 +308,37 @@ Any action takes `-P <project>` to target a project without entering it, and
 `EVE_AWS_PROJECT` overrides the current project for one shell.
 
 **Accounts** are ordinary AWS CLI profiles in `~/.aws/config`, signed in with
-`aws login`; eve stores no credentials. **Projects** live in
-`~/.config/eve/aws.json` (name, path, type, account) and read their details from
-`<path>/ids.txt` (or `<path>/aws/ids.txt`):
+`aws login`; eve stores no credentials.
 
+**Projects** are one JSON file each in `~/.config/eve/aws/projects/` - outside
+any repo, so none of your AWS IDs get committed. Share one with
+`project export` (drops this machine's `path`) and `project import`:
+
+```json
+{
+  "name": "moodle-lab", "type": "moodle", "account": "default",
+  "account_id": "261732724428",
+  "path": "/home/nms/moodle-aws",
+  "cluster": "moodle",
+  "services": ["moodle-web", "moodle-cron"],
+  "default_service": "web",
+  "containers": {"web": "php"},
+  "db_id": "moodle-db",
+  "target_group_arn": "arn:aws:elasticloadbalancing:...",
+  "site_url": "https://mdl.example.com",
+  "log_group": "/ecs/moodle",
+  "registry": "261732724428.dkr.ecr.ap-southeast-2.amazonaws.com",
+  "repos": ["moodle-php", "moodle-nginx"],
+  "files_bucket": "moodle-files-261732724428",
+  "recipes": {"hello": {"cmd": "echo hi", "service": "cron"}},
+  "resources": {"vpc": "vpc-...", "subnets": "subnet-... subnet-..."}
+}
 ```
-ACCOUNT_ID=261732724428                 # actions that change things refuse on another account
-CLUSTER=moodle
-SERVICES=moodle-web moodle-cron         # short names: web, cron
-DEFAULT_SERVICE=web
-DB_ID=moodle-db                         # optional
-TG_ARN=arn:aws:elasticloadbalancing:... # optional, for status
-SITE_URL=https://mdl.example.com        # optional, for status/unpark
-LOG_GROUP=/ecs/moodle
-REGISTRY=261732724428.dkr.ecr.ap-southeast-2.amazonaws.com
-REPOS=moodle-php moodle-nginx           # pushed from <repo>:local
-FILES_BUCKET=moodle-files-261732724428
-CONTAINER_web=php                       # optional; the moodle type defaults to php
-RECIPE_hello=echo hi                    # optional custom recipes
-RECIPE_hello_SERVICE=cron
-```
+
+`eve aws project keys` explains each key. `account_id` turns on the safety
+check: actions that change things refuse to run in any other account. An old
+`KEY=VALUE` `ids.txt` can be brought in with `project add --from`, and projects
+from earlier eve versions are converted automatically.
 
 The `moodle` type adds recipes `purge`, `upgrade`, `cron` and `reset-password`
 (run as `www-data`). When a service runs several tasks or a task has several
