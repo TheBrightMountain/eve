@@ -39,7 +39,13 @@ def _headless():
 def _login(ctx, name, remote):
     use_remote = _headless() if remote is None else remote
     args = ["login", "--profile", name] + (["--remote"] if use_remote else [])
-    runner(ctx).interactive(["aws", *args], mutating=True)
+    try:
+        runner(ctx).interactive(["aws", *args], mutating=True)
+    except AwsError as exc:
+        hint = f"Try again: eve aws account login {name}"
+        if use_remote:
+            hint += "  (open the NEW link it prints, ideally in a fresh tab, and paste the code from that page)"
+        raise AwsError(f"Signing in to {name} failed.", hint) from exc
 
 
 def remove_profile_section(path, name):
@@ -136,10 +142,16 @@ def ls(ctx):
 @REMOTE
 @click.pass_context
 def add(ctx, name, region, remote):
-    """Save a new account as profile `NAME` and sign in to it."""
+    """Save a new account as profile `NAME` and sign in to it.
+
+    Safe to re-run: if the profile is already saved but not signed in (say the
+    first sign-in failed), it just signs in.
+    """
     with reporting():
         if name in profiles(ctx):
-            raise AwsError(f"Account {name!r} already exists.", f"eve aws account login {name}")
+            if identity(runner(ctx, name)):
+                raise AwsError(f"Account {name!r} already exists and is signed in.", f"eve aws account login {name}")
+            info(f"{name} is saved but not signed in - signing in")
         runner(ctx, name).aws("configure", "set", "region", region, mutating=True)
         _login(ctx, name, remote)
         state = statefile.load()

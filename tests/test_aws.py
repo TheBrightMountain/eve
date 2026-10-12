@@ -360,6 +360,27 @@ def test_account_add_sets_region_then_logs_in_remotely(env, monkeypatch):
     assert statefile.load()["current_account"] == "work"
 
 
+def test_account_add_resumes_a_saved_but_signed_out_profile(env):
+    env["fake"].on("configure", "list-profiles", out="default\nlab\nhalf\n")
+    env["fake"].on("sts", "get-caller-identity", rc=255, err="Unable to locate credentials")
+    result = invoke("account", "add", "half", "--region", "ap-southeast-2", "--remote")
+    assert result.exit_code == 0, result.output
+    assert "signing in" in result.output
+    assert ["aws", "login", "--profile", "half", "--remote"] in env["fake"].ran("login")
+
+
+def test_account_add_refuses_a_signed_in_profile(env):
+    result = invoke("account", "add", "lab", "--region", "ap-southeast-2")
+    assert result.exit_code == 1 and "already exists and is signed in" in result.output
+
+
+def test_failed_sign_in_says_how_to_retry(env):
+    env["fake"].on("login", "--profile", rc=255, err="State parameter does not match")
+    result = invoke("account", "add", "work", "--region", "ap-southeast-1", "--remote")
+    assert result.exit_code == 1
+    assert "Signing in to work failed" in result.output and "eve aws account login work" in result.output
+
+
 def test_account_login_skips_login_when_signed_in(env):
     result = invoke("account", "login", "lab")
     assert result.exit_code == 0, result.output
