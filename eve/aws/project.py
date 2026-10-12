@@ -9,9 +9,9 @@ from rich.table import Table
 
 from eve.aws import state as statefile
 from eve.aws import types as projtypes
+from eve.aws.account import profiles
 from eve.aws.config import Project, ids_file
 from eve.aws.context import header, identity, reporting, runner
-from eve.aws.creds import profiles
 from eve.aws.runner import AwsError
 from eve.console import console, info, success, warning
 
@@ -52,7 +52,7 @@ def ls():
 @click.argument("name")
 @click.option("--path", "path", required=True, type=click.Path(file_okay=False), help="The project's folder.")
 @click.option("--type", "kind", default="ecs", show_default=True, type=click.Choice(projtypes.names()))
-@click.option("--account", required=True, help="Account (from `eve aws creds ls`) the project lives in.")
+@click.option("--account", required=True, help="Account (from `eve aws account ls`) the project lives in.")
 @click.pass_context
 def add(ctx, name, path, kind, account):
     """Remember project `NAME`."""
@@ -61,7 +61,7 @@ def add(ctx, name, path, kind, account):
         if not ids_file(folder).exists():
             raise AwsError(f"{ids_file(folder)} not found.", "A project needs an aws/ids.txt with its IDs.")
         if account not in profiles(ctx):
-            warning(f"No account {account!r} yet - add it with `eve aws creds add {account} --region <region>`.")
+            warning(f"No account {account!r} yet - add it with `eve aws account add {account} --region <region>`.")
         state = statefile.load()
         if name in state["projects"]:
             raise AwsError(f"Project {name!r} already exists.", f"eve aws project rm {name} first.")
@@ -106,7 +106,7 @@ def enter(ctx, name):
             success(f"Entered {name} - signed in to {who['Account']} as {who['Arn'].rsplit('/', 1)[-1]}")
         else:
             warning(f"Entered {name}, but account {project.account} is not signed in.")
-            info(f"eve aws creds login {project.account}")
+            info(f"eve aws account login {project.account}")
 
 
 @project_group.command("leave")

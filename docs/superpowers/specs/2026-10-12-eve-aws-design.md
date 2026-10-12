@@ -18,7 +18,7 @@ than hiding it.
 
 | Decision | Choice | Reason |
 |---|---|---|
-| Shape | Two managed nouns (`creds`, `project`), one *current* selection of each, then actions on the current project | Mirrors how the user thinks: pick account + project once, then act |
+| Shape | Two managed nouns (`account`, `project`), one *current* selection of each, then actions on the current project | Mirrors how the user thinks: pick account + project once, then act |
 | Accounts | Stored as standard AWS CLI profiles in `~/.aws/config`; signed in with `aws login --remote --profile <name>` | No credentials ever stored by eve; plain `aws --profile x` keeps working |
 | Projects | Registered by name with a path, a **type** and an account; details read from the project's `aws/ids.txt` | The repo stays the source of truth; works for non-Moodle projects |
 | Project types | `ecs` (generic) and `moodle` (ecs + built-in recipes/defaults) | Moodle knowledge lives in a type, not in the core commands |
@@ -42,11 +42,11 @@ eve aws [-q] [-n] <group|action> ...
 -n/--dry-run   print the commands that would change something; run only read-only ones
 
 ── accounts ────────────────────────────────────────────────────────────────
-eve aws creds ls                         name, account ID, region, signed in?, * = current
-eve aws creds add <name> --region R      create the profile and sign in
-eve aws creds rm <name>                  remove the profile (refuses if a project uses it, unless --force)
-eve aws creds login <name>               make it current; signs in only if the session is missing/expired
-eve aws creds logout [<name>]            sign out (default: current)
+eve aws account ls                         name, account ID, region, signed in?, * = current
+eve aws account add <name> --region R      create the profile and sign in
+eve aws account rm <name>                  remove the profile (refuses if a project uses it, unless --force)
+eve aws account login <name>               make it current; signs in only if the session is missing/expired
+eve aws account logout [<name>]            sign out (default: current)
 
 ── projects ────────────────────────────────────────────────────────────────
 eve aws project ls                       name, type, account, path, * = current
@@ -85,7 +85,7 @@ for one shell (the current selection is otherwise shared by all terminals).
 }
 ```
 
-Accounts are not duplicated here: `creds ls` reads profiles from `~/.aws/config`
+Accounts are not duplicated here: `account ls` reads profiles from `~/.aws/config`
 and checks each with `aws sts get-caller-identity --profile <name>`.
 
 ### Account selection order
@@ -151,7 +151,7 @@ and the short name is the CloudWatch stream prefix.
 
 | Seen | eve says |
 |---|---|
-| `Your session has expired` / `ExpiredToken` | `eve aws creds login <name>` |
+| `Your session has expired` / `ExpiredToken` | `eve aws account login <name>` |
 | `AccessDenied` mentioning `assumed-role/` while `AWS_ACCESS_KEY_ID` is set | env-var credentials are overriding your profile |
 | account ID mismatch | which account you're on vs the project's, and refuses |
 | no current project | `eve aws project enter <name>` or `-P` |
@@ -167,11 +167,11 @@ eve/aws/
   types.py         project types: defaults + built-in recipes
   runner.py        run()/run_json(): print "$ cmd", quiet/dry-run, --profile injection, error mapping
   pick.py          flag → default → single → picker resolution
-  creds.py         creds group
+  account.py       account group (alias `acc`)
   project.py       project group
   actions.py       status, park, unpark, logs, exec, run, push, files
 tests/
-  test_aws_state.py  test_aws_config.py  test_aws_creds.py  test_aws_project.py  test_aws_actions.py
+  test_aws_state.py  test_aws_config.py  test_aws_account.py  test_aws_project.py  test_aws_actions.py
 ```
 
 `runner` is the only module touching `subprocess`; tests swap in a fake that
@@ -181,7 +181,7 @@ records argv and returns canned JSON. No test calls real AWS.
 
 - state: create/load/save, current selections, project add/rm/enter/leave, rm refusing a referenced account.
 - config: parsing, `=` in values, missing-key errors, short names, type defaults merged with ids.txt overrides.
-- creds: profile creation via `aws configure set`, login only when expired, ls rendering.
+- account: profile creation via `aws configure set`, login only when expired, ls rendering.
 - actions: exact argv per command, `--profile` always injected, dry-run skips mutating calls,
   unpark stopping→stopped→available and its refusal path, push dirty-tree refusal,
   safety-check refusal, picker resolution order, error mapping.

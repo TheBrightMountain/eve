@@ -67,9 +67,9 @@ def explain(stderr):
     """Map well-known aws errors to something actionable."""
     text = stderr.strip()
     if "session has expired" in text or "ExpiredToken" in text or "reauthenticate" in text:
-        return "Your sign-in has expired.", "eve aws creds login <name>"
+        return "Your sign-in has expired.", "eve aws account login <name>"
     if "Unable to locate credentials" in text or "could not be found" in text and "profile" in text:
-        return "No credentials for this account.", "eve aws creds login <name>"
+        return "No credentials for this account.", "eve aws account login <name>"
     if "AccessDenied" in text and "assumed-role/" in text and os.environ.get("AWS_ACCESS_KEY_ID"):
         return (
             text.splitlines()[-1] if text else "Access denied.",

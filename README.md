@@ -281,10 +281,10 @@ account and a project once, then act on it. Every step prints the real `aws` /
 changing anything).
 
 ```
-eve aws creds ls                         accounts (AWS CLI profiles), which is current, signed in or not
-eve aws creds add <name> --region R      save a new account and sign in (aws login)
-eve aws creds login <name>               make it current; signs in only if the session expired
-eve aws creds logout [<name>]  |  rm <name>
+eve aws account ls                         accounts (AWS CLI profiles), which is current, signed in or not
+eve aws account add <name> --region R      save a new account and sign in (aws login)
+eve aws account login <name>               make it current; signs in only if the session expired
+eve aws account logout [<name>]  |  rm <name>
 
 eve aws project ls
 eve aws project add <name> --path P --type ecs|moodle --account A

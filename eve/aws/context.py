@@ -76,7 +76,7 @@ def safety_check(project, runner_):
     who = identity(runner_)
     if who is None:
         raise AwsError(
-            f"Not signed in to account {runner_.profile!r}.", f"eve aws creds login {runner_.profile or '<name>'}"
+            f"Not signed in to account {runner_.profile!r}.", f"eve aws account login {runner_.profile or '<name>'}"
         )
     if not expected:
         warning(f"ACCOUNT_ID is not set in {project.ids_path} - skipping the wrong-account check.")
@@ -84,6 +84,6 @@ def safety_check(project, runner_):
     if who["Account"] != expected:
         raise AwsError(
             f"Signed in to account {who['Account']}, but project {project.name} lives in {expected}.",
-            f"eve aws creds login <the account for {expected}>",
+            f"eve aws account login <the account for {expected}>",
         )
     return who

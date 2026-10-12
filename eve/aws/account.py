@@ -1,4 +1,4 @@
-"""`eve aws creds` - the AWS accounts you sign in to.
+"""`eve aws account` - the AWS accounts you sign in to.
 
 Each account is a normal AWS CLI profile in ~/.aws/config, signed in with
 `aws login`. eve only remembers which one is current.
@@ -66,8 +66,8 @@ REMOTE = click.option(
 )
 
 
-@click.group("creds")
-def creds_group():
+@click.group("account")
+def account_group():
     """The AWS accounts you sign in to (AWS CLI profiles).
 
     - `ls` - every account, which one is current, and whether it's signed in
@@ -78,7 +78,7 @@ def creds_group():
     """
 
 
-@creds_group.command("ls")
+@account_group.command("ls")
 @click.pass_context
 def ls(ctx):
     """List accounts, their account IDs and whether each is signed in."""
@@ -97,7 +97,7 @@ def ls(ctx):
         console.print(table)
 
 
-@creds_group.command("add")
+@account_group.command("add")
 @click.argument("name")
 @click.option("--region", required=True, help="Default region for this account, e.g. ap-southeast-2.")
 @REMOTE
@@ -106,7 +106,7 @@ def add(ctx, name, region, remote):
     """Save a new account as profile `NAME` and sign in to it."""
     with reporting():
         if name in profiles(ctx):
-            raise AwsError(f"Account {name!r} already exists.", f"eve aws creds login {name}")
+            raise AwsError(f"Account {name!r} already exists.", f"eve aws account login {name}")
         runner(ctx, name).aws("configure", "set", "region", region, mutating=True)
         _login(ctx, name, remote)
         state = statefile.load()
@@ -116,7 +116,7 @@ def add(ctx, name, region, remote):
         success(f"Account {name} saved and current.")
 
 
-@creds_group.command("login")
+@account_group.command("login")
 @click.argument("name")
 @REMOTE
 @click.pass_context
@@ -124,7 +124,7 @@ def login(ctx, name, remote):
     """Make `NAME` the current account. Signs in only if its session is missing or expired."""
     with reporting():
         if name not in profiles(ctx):
-            raise AwsError(f"No account {name!r}.", f"eve aws creds add {name} --region <region>")
+            raise AwsError(f"No account {name!r}.", f"eve aws account add {name} --region <region>")
         who = identity(runner(ctx, name))
         if who:
             info(f"Already signed in as {who['Arn']}")
@@ -137,7 +137,7 @@ def login(ctx, name, remote):
         success(f"Current account: {name}")
 
 
-@creds_group.command("logout")
+@account_group.command("logout")
 @click.argument("name", required=False)
 @click.pass_context
 def logout(ctx, name):
@@ -145,12 +145,12 @@ def logout(ctx, name):
     with reporting():
         name = name or statefile.load().get("current_account")
         if not name:
-            raise AwsError("No account given and none is current.", "eve aws creds logout <name>")
+            raise AwsError("No account given and none is current.", "eve aws account logout <name>")
         runner(ctx, name).aws("logout", mutating=True)
         success(f"Signed out of {name}")
 
 
-@creds_group.command("rm")
+@account_group.command("rm")
 @click.argument("name")
 @click.option("--force", is_flag=True, help="Remove it even if a project still uses it.")
 @click.pass_context

@@ -145,12 +145,12 @@ def test_pick_order(monkeypatch):
     "path",
     [
         [],
-        ["creds"],
-        ["creds", "ls"],
-        ["creds", "add"],
-        ["creds", "login"],
-        ["creds", "logout"],
-        ["creds", "rm"],
+        ["account"],
+        ["account", "ls"],
+        ["account", "add"],
+        ["account", "login"],
+        ["account", "logout"],
+        ["account", "rm"],
         ["project"],
         ["project", "add"],
         ["project", "enter"],
@@ -204,12 +204,19 @@ def test_actions_need_a_project(env):
     assert result.exit_code == 1 and "project enter" in result.output
 
 
-# -- creds ------------------------------------------------------------------------------------------
+# -- account ----------------------------------------------------------------------------------------
 
 
-def test_creds_add_sets_region_then_logs_in_remotely(env, monkeypatch):
+def test_acc_is_an_alias_for_account(env):
+    result = invoke("acc", "ls")
+    assert result.exit_code == 0, result.output
+    assert "lab" in result.output
+    assert "acc " not in CliRunner().invoke(cli, ["aws", "--help"]).output
+
+
+def test_account_add_sets_region_then_logs_in_remotely(env, monkeypatch):
     monkeypatch.setenv("SSH_CONNECTION", "1 2 3 4")
-    result = invoke("creds", "add", "work", "--region", "ap-southeast-1")
+    result = invoke("account", "add", "work", "--region", "ap-southeast-1")
     assert result.exit_code == 0, result.output
     fake = env["fake"]
     assert ["aws", "configure", "set", "region", "ap-southeast-1", "--profile", "work"] in fake.ran("configure", "set")
@@ -217,29 +224,29 @@ def test_creds_add_sets_region_then_logs_in_remotely(env, monkeypatch):
     assert statefile.load()["current_account"] == "work"
 
 
-def test_creds_login_skips_login_when_signed_in(env):
-    result = invoke("creds", "login", "lab")
+def test_account_login_skips_login_when_signed_in(env):
+    result = invoke("account", "login", "lab")
     assert result.exit_code == 0, result.output
     assert not [c for c in env["fake"].ran("login") if c[1] == "login"]
 
 
-def test_creds_login_signs_in_when_expired(env):
+def test_account_login_signs_in_when_expired(env):
     env["fake"].on("sts", "get-caller-identity", rc=255, err="Your session has expired. Please reauthenticate")
-    result = invoke("creds", "login", "lab", "--remote")
+    result = invoke("account", "login", "lab", "--remote")
     assert result.exit_code == 0, result.output
     assert ["aws", "login", "--profile", "lab", "--remote"] in env["fake"].ran("login")
 
 
-def test_creds_rm_refuses_while_a_project_uses_it(env):
-    result = invoke("creds", "rm", "lab")
+def test_account_rm_refuses_while_a_project_uses_it(env):
+    result = invoke("account", "rm", "lab")
     assert result.exit_code == 1 and "moodle" in result.output
 
 
-def test_creds_rm_removes_the_profile_section(env, monkeypatch):
+def test_account_rm_removes_the_profile_section(env, monkeypatch):
     cfg = env["tmp"] / "awsconfig"
     cfg.write_text("[default]\nregion = x\n[profile lab]\nregion = y\n[profile work]\nregion = z\n")
     monkeypatch.setenv("AWS_CONFIG_FILE", str(cfg))
-    result = invoke("creds", "rm", "lab", "--force")
+    result = invoke("account", "rm", "lab", "--force")
     assert result.exit_code == 0, result.output
     assert cfg.read_text() == "[default]\nregion = x\n[profile work]\nregion = z\n"
 
@@ -437,9 +444,9 @@ def test_files_lists_the_bucket_prefix(env):
 # -- errors ----------------------------------------------------------------------------------------
 
 
-def test_expired_session_points_at_creds_login():
+def test_expired_session_points_at_account_login():
     message, hint = runner.explain("Your session has expired. Please reauthenticate using 'aws login'.")
-    assert "expired" in message and "creds login" in hint
+    assert "expired" in message and "account login" in hint
 
 
 def test_env_credentials_are_called_out(monkeypatch):
