@@ -59,6 +59,38 @@ def remove_profile_section(path, name):
     return removed
 
 
+def _header(name):
+    return "[default]" if name == "default" else f"[profile {name}]"
+
+
+def rename_profile_section(path, old, new):
+    """Rename `old`'s section to `new`, and repoint `source_profile = old` lines at `new`.
+
+    Returns the number of `source_profile` references that were updated.
+    """
+    old_header, new_header = _header(old), _header(new)
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    headers = [line.strip() for line in lines if line.strip().startswith("[")]
+    if old_header not in headers:
+        raise AwsError(f"No {old_header} section in {path}.")
+    if new_header in headers:
+        raise AwsError(f"An account called {new!r} already exists.")
+    out, repointed = [], 0
+    for line in lines:
+        stripped = line.strip()
+        ending = line[len(line.rstrip("\r\n")) :]
+        if stripped == old_header:
+            line = new_header + ending
+        elif "=" in stripped:
+            key, _, value = stripped.partition("=")
+            if key.strip() == "source_profile" and value.strip() == old:
+                line = f"source_profile = {new}{ending}"
+                repointed += 1
+        out.append(line)
+    path.write_text("".join(out), encoding="utf-8")
+    return repointed
+
+
 REMOTE = click.option(
     "--remote/--browser",
     default=None,
@@ -74,6 +106,7 @@ def account_group():
     - `add <name> --region R` - save a new account and sign in
     - `login <name>` - make it current, signing in only if needed
     - `logout [<name>]` - sign out
+    - `edit <name> --name NEW --region R` - rename an account or change its region
     - `rm <name>` - forget an account
     """
 
@@ -172,3 +205,56 @@ def rm(ctx, name, force):
             state["current_account"] = None
             statefile.save(state)
         success(f"Account {name} removed.")
+
+
+@account_group.command("edit")
+@click.argument("name")
+@click.option("--name", "new_name", help="Rename the account (its AWS CLI profile) to this.")
+@click.option("--region", help="Change the account's default region.")
+@click.option("-y", "--yes", is_flag=True, help="Don't ask before renaming the `default` profile.")
+@click.pass_context
+def edit(ctx, name, new_name, region, yes):
+    """Rename account `NAME` and/or change its region.
+
+    Renaming updates `~/.aws/config` (including other profiles that use it as
+    their `source_profile`) and every eve project tied to it.
+    """
+    with reporting():
+        if not new_name and not region:
+            raise AwsError("Nothing to change.", "Pass --name NEW and/or --region R.")
+        if name not in profiles(ctx):
+            raise AwsError(f"No account {name!r}.", "eve aws account ls")
+        r = runner(ctx, name)
+        if region:
+            r.aws("configure", "set", "region", region, mutating=True)
+            if not r.dry_run:
+                success(f"{name}: region → {region}")
+        if not new_name or new_name == name:
+            return
+        if name == "default":
+            warning(
+                "`default` is the profile plain `aws ...` commands use when no --profile is given. "
+                f"After renaming, those commands need `--profile {new_name}` (or AWS_PROFILE={new_name})."
+            )
+            if not yes and not click.confirm("Rename it anyway?", default=False):
+                info("Left as it is.")
+                return
+        if r.dry_run:
+            r.show(["edit", str(config_path()), f"(rename {_header(name)} → {_header(new_name)})"], prefix="would run:")
+            return
+        repointed = rename_profile_section(config_path(), name, new_name)
+        state = statefile.load()
+        moved = statefile.projects_using(state, name)
+        for project in moved:
+            state["projects"][project]["account"] = new_name
+        if state.get("current_account") == name:
+            state["current_account"] = new_name
+        statefile.save(state)
+        success(f"Renamed {name} → {new_name}")
+        if repointed:
+            info(f"Updated source_profile in {repointed} other profile(s).")
+        if moved:
+            info(f"Projects now on {new_name}: {', '.join(moved)}")
+        if identity(runner(ctx, new_name)) is None:
+            warning(f"{new_name} isn't signed in under its new name.")
+            info(f"eve aws account login {new_name}")

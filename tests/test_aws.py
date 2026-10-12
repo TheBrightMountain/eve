@@ -151,6 +151,7 @@ def test_pick_order(monkeypatch):
         ["account", "login"],
         ["account", "logout"],
         ["account", "rm"],
+        ["account", "edit"],
         ["project"],
         ["project", "add"],
         ["project", "enter"],
@@ -249,6 +250,59 @@ def test_account_rm_removes_the_profile_section(env, monkeypatch):
     result = invoke("account", "rm", "lab", "--force")
     assert result.exit_code == 0, result.output
     assert cfg.read_text() == "[default]\nregion = x\n[profile work]\nregion = z\n"
+
+
+def _awsconfig(env, monkeypatch, text):
+    cfg = env["tmp"] / "awsconfig"
+    cfg.write_text(text)
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(cfg))
+    return cfg
+
+
+def test_account_edit_renames_profile_refs_and_projects(env, monkeypatch):
+    cfg = _awsconfig(
+        env,
+        monkeypatch,
+        "[default]\nregion = x\n[profile lab]\nregion = y\nlogin_session = arn\n"
+        "[profile helper]\nrole_arn = r\nsource_profile = lab\n",
+    )
+    result = invoke("account", "edit", "lab", "--name", "example")
+    assert result.exit_code == 0, result.output
+    assert cfg.read_text() == (
+        "[default]\nregion = x\n[profile example]\nregion = y\nlogin_session = arn\n"
+        "[profile helper]\nrole_arn = r\nsource_profile = example\n"
+    )
+    st = statefile.load()
+    assert st["projects"]["moodle"]["account"] == "example"
+    assert st["current_account"] == "example"
+
+
+def test_account_edit_region(env):
+    result = invoke("account", "edit", "lab", "--region", "us-east-1")
+    assert result.exit_code == 0, result.output
+    assert ["aws", "configure", "set", "region", "us-east-1", "--profile", "lab"] in env["fake"].ran("configure", "set")
+
+
+def test_account_edit_default_asks_first(env, monkeypatch):
+    cfg = _awsconfig(env, monkeypatch, "[default]\nregion = x\n")
+    result = invoke("account", "edit", "default", "--name", "main", input="n\n")
+    assert result.exit_code == 0
+    assert "plain `aws ...`" in result.output
+    assert cfg.read_text() == "[default]\nregion = x\n"
+    result = invoke("account", "edit", "default", "--name", "main", "--yes")
+    assert result.exit_code == 0, result.output
+    assert cfg.read_text() == "[profile main]\nregion = x\n"
+
+
+def test_account_edit_refuses_an_existing_name(env, monkeypatch):
+    _awsconfig(env, monkeypatch, "[profile lab]\n[profile work]\n")
+    result = invoke("account", "edit", "lab", "--name", "work")
+    assert result.exit_code == 1 and "already exists" in result.output
+
+
+def test_account_edit_needs_something_to_change(env):
+    result = invoke("account", "edit", "lab")
+    assert result.exit_code == 1 and "Nothing to change" in result.output
 
 
 # -- status / park / unpark -----------------------------------------------------------------------

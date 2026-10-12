@@ -46,6 +46,7 @@ eve aws account ls                         name, account ID, region, signed in?,
 eve aws account add <name> --region R      create the profile and sign in
 eve aws account rm <name>                  remove the profile (refuses if a project uses it, unless --force)
 eve aws account login <name>               make it current; signs in only if the session is missing/expired
+eve aws account edit <name> [--name NEW] [--region R]   rename (updates source_profile refs + projects) / change region
 eve aws account logout [<name>]            sign out (default: current)
 
 ── projects ────────────────────────────────────────────────────────────────
