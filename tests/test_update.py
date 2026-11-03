@@ -49,10 +49,22 @@ def test_editable_clone_stays_editable(monkeypatch, tmp_path):
     ]
 
 
-def test_unknown_install_refuses(monkeypatch):
+GITHUB = [["uv", "tool", "install", "--force", "--reinstall", upd.REPO]]
+
+
+def test_unknown_install_falls_back_to_github(monkeypatch):
     installed(monkeypatch, None)
-    with pytest.raises(upd.UpdateError):
-        upd.plan(upd.install_source())
+    assert upd.plan(upd.install_source()) == GITHUB
+
+
+def test_deleted_clone_falls_back_to_github(monkeypatch, tmp_path):
+    gone = tmp_path / "docker-dev" / "eve"
+    installed(monkeypatch, {"url": gone.as_uri(), "dir_info": {}})
+    assert upd.plan(upd.install_source()) == GITHUB
+    result = CliRunner().invoke(cli, ["update", "-n"])
+    assert result.exit_code == 0, result.output
+    out = " ".join(result.output.split())
+    assert "is gone - reinstalling from GitHub" in out and upd.REPO in out
 
 
 def test_dry_run_runs_nothing(monkeypatch, tmp_path):

@@ -4,6 +4,9 @@ uv records the source of every install in the package's direct_url.json:
 
 - **git** (`uv tool install git+https://...`) - `uv tool upgrade` re-fetches the branch
 - **a clone** (`./install.sh`, `uv tool install .`) - `git pull` there, then reinstall from it
+
+If the clone has since been moved or deleted, or the source can't be told at
+all, it reinstalls from GitHub instead - after which updates come from there.
 """
 
 from __future__ import annotations
@@ -22,6 +25,12 @@ from rich.markup import escape
 
 from eve import __version__
 from eve.console import console, error, info, step, success, warning
+
+REPO = "git+https://github.com/TheBrightMountain/eve"
+
+
+def missing_clone(source):
+    return source["kind"] == "dir" and not source["path"].is_dir()
 
 
 class UpdateError(Exception):
@@ -52,6 +61,8 @@ def plan(source, uv="uv", pull=True):
     """The commands that update this install, in order."""
     if source["kind"] == "git":
         return [[uv, "tool", "upgrade", "--reinstall", "eve"]]
+    if source["kind"] == "other" or missing_clone(source):
+        return [[uv, "tool", "install", "--force", "--reinstall", REPO]]
     if source["kind"] == "dir":
         path = str(source["path"])
         cmds = []
@@ -62,10 +73,7 @@ def plan(source, uv="uv", pull=True):
             install.append("--editable")
         cmds.append([*install, path])
         return cmds
-    raise UpdateError(
-        "Can't tell where this eve was installed from, so there is nothing to update from.",
-        "uv tool install --force git+https://github.com/TheBrightMountain/eve",
-    )
+    raise UpdateError(f"Unknown install kind {source['kind']!r}.")
 
 
 def _show(cmd):
@@ -102,9 +110,13 @@ def update(dry_run, no_pull):
             console.print(f"  [dim]{exc.hint}[/dim]")
         sys.exit(1)
 
-    where = source.get("url") or str(source.get("path"))
+    where = source.get("url") or str(source.get("path") or "an unknown source")
     info(f"eve {__version__}, installed from {where}")
-    if source["kind"] == "dir" and no_pull:
+    if missing_clone(source):
+        warning(f"{where} is gone - reinstalling from GitHub instead; updates will come from there from now on.")
+    elif source["kind"] == "other":
+        warning("Can't tell where eve was installed from - reinstalling from GitHub.")
+    elif source["kind"] == "dir" and no_pull:
         info("Skipping git pull - reinstalling what is checked out.")
     elif source["kind"] == "dir" and len(cmds) == 1:
         warning(f"{where} is not a git clone - reinstalling it as is.")

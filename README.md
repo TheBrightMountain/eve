@@ -52,6 +52,8 @@ It works out where eve was installed from and does the right thing:
 - **from GitHub** — `uv tool upgrade --reinstall eve`, which re-fetches the latest commit on `main`
 - **from a clone** — `git pull --ff-only` in that clone, then `uv tool install --force --reinstall` from it
   (`--no-pull` skips the pull and installs what is checked out)
+- **from a clone that has since been moved or deleted**, or from somewhere it can't tell —
+  reinstalls from GitHub, so later updates come from there
 
 Either way the tool is rebuilt from scratch, which also repairs it after a
 system Python upgrade has left the old one pointing at an interpreter that
