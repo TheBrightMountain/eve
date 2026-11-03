@@ -5,6 +5,7 @@ from eve.aws import aws_group
 from eve.device import device_group, ssh, wake
 from eve.dns import dns_group
 from eve.route import route_group
+from eve.update import update
 
 click.rich_click.TEXT_MARKUP = "markdown"
 click.rich_click.SHOW_ARGUMENTS = True
@@ -32,6 +33,7 @@ cli.add_command(aws_group)
 cli.add_command(device_group)
 cli.add_command(wake)
 cli.add_command(ssh)
+cli.add_command(update)
 
 
 def main():

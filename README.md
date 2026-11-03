@@ -44,15 +44,18 @@ privileged commands from an elevated PowerShell.
 ### Updating
 
 ```bash
-uv tool upgrade eve
+eve update        # -n shows the commands without running them
 ```
 
-Re-fetches the latest commit on `main`. If you installed from a clone instead,
-that would rebuild from your local directory — pull first:
+It works out where eve was installed from and does the right thing:
 
-```bash
-cd /path/to/eve && git pull && ./install.sh
-```
+- **from GitHub** — `uv tool upgrade --reinstall eve`, which re-fetches the latest commit on `main`
+- **from a clone** — `git pull --ff-only` in that clone, then `uv tool install --force --reinstall` from it
+  (`--no-pull` skips the pull and installs what is checked out)
+
+Either way the tool is rebuilt from scratch, which also repairs it after a
+system Python upgrade has left the old one pointing at an interpreter that
+is gone.
 
 The `/usr/local/bin` link survives either, because it points at
 `~/.local/bin/eve`, which uv recreates on every install.
