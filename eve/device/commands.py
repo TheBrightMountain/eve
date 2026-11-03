@@ -84,7 +84,7 @@ def device_group():
 
     - `ls` · `show <name>` - list them / print one
     - `add <name> [-a ALIAS]... [--mac M] [--ip IP] [--host H] [--user U] ...` - remember one
-    - `edit <name> [--rename N] [-a ALIAS] [--drop-alias A] [--mac M] ... [--unset FIELD]` - change it
+    - `edit <name> [--name N] [-a ALIAS] [--drop-alias A] [--mac M] ... [--unset FIELD]` - change it
     - `remove <name>` (or `rm`) - forget it
 
     Then `eve wake <name>` and `eve ssh <name>`. A device answers to its name or
@@ -150,7 +150,7 @@ def add(name, aliases, **values):
 
 @device_group.command("edit")
 @click.argument("name")
-@click.option("--rename", metavar="NEW", help="Give it a new name.")
+@click.option("--name", "new_name", metavar="N", help="Give it a new name.")
 @click.option("-a", "--alias", "aliases", multiple=True, metavar="ALIAS", help="Add an alias (repeatable).")
 @click.option("--drop-alias", "dropped", multiple=True, metavar="ALIAS", help="Remove an alias (repeatable).")
 @click.option(
@@ -161,7 +161,7 @@ def add(name, aliases, **values):
     help="Clear a field (repeatable).",
 )
 @field_options
-def edit(name, rename, aliases, dropped, unset, **values):
+def edit(name, new_name, aliases, dropped, unset, **values):
     """Change device `NAME` (or alias). Only the options you give change."""
     with reporting():
         devices = store.load()
@@ -170,7 +170,7 @@ def edit(name, rename, aliases, dropped, unset, **values):
         both = set(changes) & set(unset)
         if both:
             raise DeviceError(f"Cannot both set and unset {', '.join(sorted(both))}.")
-        if not (rename or aliases or dropped or unset or changes):
+        if not (new_name or aliases or dropped or unset or changes):
             raise DeviceError("Nothing to change.", "eve device edit -h")
 
         device = dict(device)
@@ -184,13 +184,13 @@ def edit(name, rename, aliases, dropped, unset, **values):
             raise DeviceError(f"{name} has no alias {', '.join(missing)}.")
         current = [c for c in current if c.lower() not in (a.lower() for a in dropped)]
 
-        new_name = name
-        if rename:
-            store.check_name(rename)
-            clash = store.taken(devices, rename, ignore=name)
+        if new_name:
+            store.check_name(new_name)
+            clash = store.taken(devices, new_name, ignore=name)
             if clash:
-                raise DeviceError(f"{rename!r} is already taken by {clash}.")
-            new_name = rename
+                raise DeviceError(f"{new_name!r} is already taken by {clash}.")
+        else:
+            new_name = name
         _check_aliases(devices, aliases, name)
         current = list(dict.fromkeys(current + [a for a in aliases if a.lower() != new_name.lower()]))
         if current:

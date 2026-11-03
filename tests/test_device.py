@@ -86,7 +86,7 @@ def test_edit_changes_only_what_is_given(config):
 
 def test_edit_rename(config):
     add_bs()
-    assert run("device", "edit", "battlestation", "--rename", "rig").exit_code == 0
+    assert run("device", "edit", "battlestation", "--name", "rig").exit_code == 0
     assert list(saved(config)) == ["rig"]
 
 
