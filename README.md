@@ -96,6 +96,31 @@ hand.
 `make install` / `make test` also work if you have make — the Makefile just
 delegates to `install.sh`.
 
+## `eve device`, `eve wake`, `eve ssh`
+
+Remember your machines once, then wake and reach them by name:
+
+```bash
+eve device add battlestation -a bs --mac 9C:6B:00:36:2B:BC --ip 10.0.0.73 \
+    --host battlestation.bicorn-luma.ts.net --user nms
+eve device ls
+eve device edit bs --port 2222 --unset host -a rig --drop-alias bs
+eve device remove bs            # or rm; -y skips the question
+
+eve wake battlestation          # wake-on-LAN magic packet; --wait to block until it pings
+eve ssh bs                      # ssh nms@battlestation.bicorn-luma.ts.net
+eve ssh bs -L 8080:localhost:80 uptime    # anything after the name goes to ssh
+```
+
+A device answers to its name or any alias. Fields: `mac`, `ip`, `host`
+(what ssh dials if not the ip), `user`, `port`, `broadcast`, `note` - all
+optional. They live in `~/.config/eve/devices.json`.
+
+`wake` broadcasts on the LAN (the configured `broadcast`, the ip's /24, then
+255.255.255.255), so it only works from the same network - a VPN like
+Tailscale doesn't carry it. The target needs wake-on-LAN enabled in its
+BIOS/UEFI and, on Windows, in the network adapter's power settings.
+
 ## `eve route`
 
 Find a way through to somewhere the network is keeping from you.

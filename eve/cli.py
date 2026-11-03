@@ -2,6 +2,7 @@ import rich_click as click
 
 from eve import __version__
 from eve.aws import aws_group
+from eve.device import device_group, ssh, wake
 from eve.dns import dns_group
 from eve.route import route_group
 
@@ -28,6 +29,9 @@ def cli():
 cli.add_command(route_group)
 cli.add_command(dns_group)
 cli.add_command(aws_group)
+cli.add_command(device_group)
+cli.add_command(wake)
+cli.add_command(ssh)
 
 
 def main():
