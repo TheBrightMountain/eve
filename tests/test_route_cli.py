@@ -6,7 +6,7 @@ import pytest
 from click.testing import CliRunner
 
 from eve.cli import cli
-from eve.route import ledger, paths, probe
+from eve.route import dpi_linux, ledger, paths, probe
 
 SUBCOMMANDS = ("check", "add", "import", "rm", "ls", "sync")
 
@@ -21,6 +21,15 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "dpi_hostlist_path", lambda: tmp_path / "route-dpi.txt")
     monkeypatch.setattr(paths, "zapret_dir", lambda: tmp_path / "zapret")
     monkeypatch.setattr(paths, "is_admin", lambda: True)
+    # The unit path is a module constant, not a paths.* lookup. Left alone, a
+    # real /etc/systemd/system/eve-route-dpi.service makes present() true and
+    # the tests tear down the machine's actual DPI service via systemctl.
+    monkeypatch.setattr(dpi_linux, "UNIT_PATH", tmp_path / "eve-route-dpi.service")
+
+    def no_system_commands(cmd, **kw):
+        raise AssertionError(f"test tried to run a real system command: {cmd}")
+
+    monkeypatch.setattr(dpi_linux, "_run", no_system_commands)
     return tmp_path
 
 
